@@ -1,0 +1,37 @@
+<article class="post"
+         data-slug="handmade-hero-day-174"
+         data-title="Handmade Hero Day 174: Adding Sparse Unicode Support"
+         data-date="2025-08-03"
+         data-updated="2025-08-10"
+         data-authors="Casey Muratori"
+         data-topics="#unicode #handmade-hero #game-dev">
+  <h1 class="post-title">Handmade Hero Day 174</h1>
+  <h2 class="post-subtitle">Adding Sparse Unicode Support</h2>
+
+  <div class="post-meta">
+    <!-- This will be filled in by JavaScript -->
+  </div>
+
+  <p class="lead">Today we're tackling the complex world of Unicode. Instead of supporting the entire specification, we'll focus on a "sparse" implementation that covers the most common use cases for game development text rendering.</p>
+
+  <h2>The Problem with Unicode</h2>
+  <p>Full Unicode support is a massive undertaking, involving complex rules for combining characters, bidirectionality, and more. For many games, this is overkill. We only need to render text from a limited set of languages.</p>
+
+  <h2>A Simpler Approach</h2>
+  <p>Our approach will be to pre-process our font assets to contain only the glyphs we need. We'll map UTF-8 input to our internal glyph indices. This keeps the runtime code simple and fast.</p>
+  
+  <pre><code class="lang-c">
+typedef struct {
+    uint32_t codepoint;
+    // ... other glyph data
+} glyph_info;
+
+void DrawText(char *text) {
+    // 1. Decode UTF-8 string to codepoints
+    // 2. Look up codepoint in our sparse glyph map
+    // 3. Render the corresponding glyph
+}
+  </code></pre>
+
+  <div class="post-footer">This is a pragmatic solution for indie game development.</div>
+</article>

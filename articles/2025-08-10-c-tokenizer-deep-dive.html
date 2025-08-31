@@ -1,0 +1,59 @@
+<article class="post"
+         data-slug="2025-08-10-c-tokenizer-deep-dive"
+         data-title="A Deep Dive into C Tokenization for Syntax Highlighting"
+         data-date="2025-08-10"
+         data-updated="2025-08-10"
+         data-authors="Jane Doe"
+         data-topics="#programming #c #parsing #syntax-highlighting">
+  <h1 class="post-title">A Deep Dive into C Tokenization</h1>
+  <h2 class="post-subtitle">How We Built the Client-Side Syntax Highlighter</h2>
+
+  <div class="post-meta">
+    <div><time class="post-date">2025 Aug 10</time></div>
+    <div class="post-authors">Jane Doe</div>
+    <div class="post-topics"><span class="tag">programming</span> <span class="tag">c</span> <span class="tag">parsing</span></div>
+  </div>
+
+  <p class="lead">Building a syntax highlighter from scratch seems daunting, but a simple, regex-based tokenizer for a language like C is surprisingly manageable. This article explores the approach used in this very blog.</p>
+
+  <h2>The Strategy</h2>
+  <p>The core idea is to consume the input string piece by piece, always looking for the longest possible match from a set of predefined token types. We prioritize tokens to handle ambiguities (e.g., checking for a multi-line comment before a single `/` character).</p>
+  <p>The order of matching is crucial:</p>
+  <ol>
+    <li>Preprocessor directives (entire lines starting with <code>#</code>)</li>
+    <li>Multi-line comments (<code>/* ... */</code>)</li>
+    <li>Single-line comments (<code>// ...</code>)</li>
+    <li>Strings and character literals</li>
+    <li>Numbers (including hex and scientific notation)</li>
+    <li>Keywords and Identifiers</li>
+  </ol>
+
+  <h2>Example Code</h2>
+  <p>Here is the tokenizer in action on a sample C file. Notice how keywords, comments, strings, and numbers are colored, but identifiers like <code>printf</code> or <code>my_variable</code> are not.</p>
+
+  <pre><code class="lang-c">
+#include <stdio.h>
+
+// This is a single-line comment.
+#define PI 3.14159
+
+/*
+ * This is a multi-line comment
+ * that spans multiple lines.
+ */
+int main() {
+    char greeting[] = "Hello, World!\n";
+    int hex_value = 0x1A;
+    float e_notation = 1.23e-4;
+    
+    // A simple loop
+    for (int i = 0; i < 5; i++) {
+        printf("%s", greeting); // Function calls are not keywords
+    }
+
+    return 0; // Return success
+}
+  </code></pre>
+
+  <div class="post-footer">This approach is fast enough for client-side use without a heavy library.</div>
+</article>

@@ -1,0 +1,41 @@
+<article class="post"
+         data-slug="2025-07-25-spa-architecture-thoughts"
+         data-title="Thoughts on Minimalist SPA Architecture"
+         data-date="2025-07-25"
+         data-updated="2025-07-25"
+         data-authors="Jane Doe"
+         data-topics="#web-dev #javascript #architecture">
+  <h1 class="post-title">Thoughts on Minimalist SPA Architecture</h1>
+  <h2 class="post-subtitle">Why No Frameworks?</h2>
+
+  <div class="post-meta">
+    <div><time class="post-date">2025 Jul 25</time></div>
+    <div class="post-authors">Jane Doe</div>
+    <div class="post-topics"><span class="tag">web-dev</span> <span class="tag">javascript</span></div>
+  </div>
+
+  <p class="lead">This blog itself is an experiment in minimalist single-page application design. By avoiding large frameworks, we gain complete control, reduce dependencies, and achieve maximum performance for this specific use case.</p>
+
+  <h2>Core Principles</h2>
+  <ul>
+      <li><strong>Single File:</strong> HTML, CSS, and JS are all in `index.html`. This simplifies deployment to any static host.</li>
+      <li><strong>Static Content:</strong> Articles are separate HTML files, not database entries. This makes them easy to edit and version control.</li>
+      <li><strong>Vanilla JS:</strong> No React, Vue, or Angular. We manipulate the DOM directly, which is perfectly fine for an application with simple state transitions.</li>
+      <li><strong>State Management:</strong> A single, simple JavaScript object holds the entire application state (the list of articles, sort order, etc.). Rendering functions are called when the state changes.</li>
+  </ul>
+  
+  <pre><code class="lang-c">
+// The "framework" is just a few functions:
+function render() {
+    // Update DOM based on `state` object
+}
+
+function handleEvent() {
+    // Mutate `state` object
+    // Call render()
+}
+  </code></pre>
+  
+  <h2>Tradeoffs</h2>
+  <p>This approach would not scale to a large, multi-person project. The lack of a component model or declarative rendering would become a bottleneck. But for a personal site, it's a joy to work with—fast, transparent, and with zero bloat.</p>
+</article>
