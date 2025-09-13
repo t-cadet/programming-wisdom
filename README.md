@@ -1,4 +1,7 @@
 # Programming Wisdom
 
-Commenting <small>#Casey Muratori</small>
-		<iframe  width="192"  height="108"  src="https://www.youtube.com/embed/pkaKQzq-hrM?start=3566&end=3712"  title="Handmade Hero Day 174 - Adding Sparse Unicode Support"  frameborder="0"  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"  referrerpolicy="strict-origin-when-cross-origin"  allowfullscreen></iframe>	<iframe  width="192"  height="108"  src="https://www.youtube.com/embed/pkaKQzq-hrM?start=3776&end=3950"  title="Handmade Hero Day 174 - Adding Sparse Unicode Support"  frameborder="0"  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"  referrerpolicy="strict-origin-when-cross-origin"  allowfullscreen></iframe> 	<iframe  width="192"  height="108"  src="https://www.youtube.com/embed/pkaKQzq-hrM?start=4026&end=4072"  title="Handmade Hero Day 174 - Adding Sparse Unicode Support"  frameborder="0"  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"  referrerpolicy="strict-origin-when-cross-origin"  allowfullscreen></iframe>
+
+A blog about programming.
+
+
+Live at: https://t-cadet.github.io/programming-wisdom/

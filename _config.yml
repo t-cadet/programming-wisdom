@@ -1,5 +1,0 @@
-theme: jekyll-theme-midnight
-title: Programming Wisdom
-markdown: kramdown
-kramdown:
-  parse_block_html: true
