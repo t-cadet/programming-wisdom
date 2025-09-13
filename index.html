@@ -741,7 +741,17 @@
 
             // People
             if (people) {
-                metaHTML += `<div class="post-people">${people}</div>`;
+                const personsHTML = people
+                    .split('@')
+                    .map(person => person.trim())      // First, trim all potential persons
+                    .filter(person => person)          // Then, remove any that are now empty
+                    .map(person => `<a href="?filter=@${person}">@${person}</a>`)
+                    .join(' ');
+
+                // Only add the persons container if there are actual persons to display
+                if (personsHTML) {
+                    metaHTML += `<div class="post-people">${personsHTML}</div>`;
+                }
             }
 
             // Topics 
@@ -750,7 +760,7 @@
                     .split('#')
                     .map(tag => tag.trim())      // First, trim all potential tags
                     .filter(tag => tag)          // Then, remove any that are now empty
-                    .map(tag => `<span class="tag">${tag}</span>`)
+                    .map(tag => `<span class="tag"><a href="?filter=%23${tag}">#${tag}</a></span>`)
                     .join(' ');
                 
                 // Only add the topics container if there are actual topics to display
