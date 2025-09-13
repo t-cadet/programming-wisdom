@@ -658,8 +658,6 @@
             if (state.filterRegex) {
                 filteredArticles = state.articles.filter(article => {
                     const rowString = `date:${article.date};update:${article.last_update};title:${article.title};people:${article.people};topics:${article.topics}`;
-                    console.log(rowString);
-                    console.log(state.filterRegex);
                     return state.filterRegex.test(rowString);
                 });
             }
@@ -881,9 +879,12 @@
         // #region --- 8. Event Handlers & Keyboard Shortcuts ---
         function handleFilterInput(e) {
             const value = e.target.value;
+            const url = new URL(window.location);
             if (!value) {
                 state.filterRegex = null;
+                url.searchParams.delete("filter");
             } else {
+                url.searchParams.set("filter", value);
                 try {
                     // Support /pattern/flags format
                     const match = value.match(/^\/(.*)\/([gimyusv]*)$/);
@@ -898,6 +899,7 @@
                     elements.filterInput.style.color = 'red';
                 }
             }
+            window.history.replaceState({}, "", url);
             renderTable();
         }
 
@@ -990,6 +992,13 @@
             
             // Initial route handling
             handleRouteChange();
+
+            const urlParams = new URLSearchParams(window.location.search);
+            const filter = urlParams.get("filter");
+            if (filter) {
+                elements.filterInput.value = filter;
+                elements.filterInput.dispatchEvent(new Event("input", { bubbles: true }));
+            }
         }
 
         init();
