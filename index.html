@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SPA Blog</title>
+    <title>Programming Wisdom</title>
     <style>
         /* #region --- 1. CSS Variables & Theme --- */
         :root {
@@ -305,7 +305,7 @@
         <!-- Header -->
         <header id="main-header">
             <div class="header-content">
-                <div class="blog-title" id="blog-title">My Blog</div>
+                <div class="blog-title" id="blog-title">Programming Wisdom</div>
                 <div class="settings-icon" id="settings-icon" title="Settings">⚙️</div>
             </div>
             <svg class="accolade-svg" viewBox="0 0 100 10" preserveAspectRatio="none"><path d="M0 5 C 20 0, 30 10, 50 5 S 80 0, 100 5 L 100 10 L 0 10 Z"></path></svg>
@@ -316,7 +316,7 @@
             <!-- Index View -->
             <div id="index-view">
                 <div class="filter-controls">
-                    <input type="search" id="filter-input" placeholder="Regex filter: 2025.*;Muratori">
+                    <input type="search" id="filter-input" placeholder="Regex filter: date:2025.*;update:.*;title:Hello.*;people:@OP;topics:.*;">
                     <span id="match-count"></span>
                 </div>
                 <div class="table-container" id="table-container">
@@ -324,9 +324,9 @@
                         <thead>
                             <tr>
                                 <th data-sort="date">Date</th>
-                                <th data-sort="last_update">Updated</th>
+                                <th data-sort="last_update">Update</th>
                                 <th data-sort="title">Title</th>
-                                <th data-sort="authors">Authors</th>
+                                <th data-sort="people">People</th>
                                 <th data-sort="topics">Topics</th>
                             </tr>
                         </thead>
@@ -356,7 +356,7 @@
         <!-- Footer -->
         <footer>
             <svg class="accolade-svg" viewBox="0 0 100 10" preserveAspectRatio="none" style="transform: scaleY(-1);"><path d="M0 5 C 20 0, 30 10, 50 5 S 80 0, 100 5 L 100 10 L 0 10 Z"></path></svg>
-            <p>&copy; 2025 Your Name Here. All rights reserved.</p>
+            <!-- <p>&copy; All rights reserved</p> -->
         </footer>
     </div>
 
@@ -391,7 +391,7 @@
         const C_KEYWORDS = new Set(['auto', 'break', 'case', 'char', 'const', 'continue', 'default', 'do', 'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if', 'int', 'long', 'register', 'return', 'short', 'signed', 'sizeof', 'static', 'struct', 'switch', 'typedef', 'union', 'unsigned', 'void', 'volatile', 'while']);
 
         const state = {
-            articles: [], // { slug, date, updated, title, authors, topics, element }[]
+            articles: [], // { slug, date, updated, title, people, topics, element }[]
             sort: { column: 'last_update', order: 'asc' },
             filterRegex: null,
             focusedRowIndex: -1,
@@ -572,7 +572,16 @@
             const doc = new DOMParser().parseFromString(html, 'text/html');
             return doc.querySelector('article.post');
         }
-        
+
+        function setArticleMetadata(article, metadata) {
+            article.setAttribute('data-slug', metadata.slug);
+            article.setAttribute('data-title', metadata.title);
+            article.setAttribute('data-date', metadata.date);
+            article.setAttribute('data-updated', metadata.last_update);
+            article.setAttribute('data-people', metadata.people);
+            article.setAttribute('data-topics', metadata.topics);
+        }
+
         async function fetchAllArticles() {
             const manifest = [
               {
@@ -580,7 +589,7 @@
                 "title": "A Deep Dive into C Tokenization for Syntax Highlighting",
                 "date": "2025-08-10",
                 "updated": "2025-08-10",
-                "authors": "Jane Doe",
+                "people": "@Jane Doe",
                 "topics": "#programming #c #parsing #syntax-highlighting"
               },
               {
@@ -588,7 +597,7 @@
                 "title": "Handmade Hero Day 174: Adding Sparse Unicode Support",
                 "date": "2025-08-03",
                 "updated": "2025-08-10",
-                "authors": "Casey Muratori",
+                "people": "@Casey Muratori",
                 "topics": "#unicode #handmade-hero #tgame-dev"
               },
               {
@@ -596,7 +605,7 @@
                 "title": "Thoughts on Minimalist SPA Architecture",
                 "date": "2025-07-25",
                 "updated": "2025-07-25",
-                "authors": "Jane Doe",
+                "people": "@Jane Doe",
                 "topics": "#web-dev #javascript #architecture"
               }
             ];
@@ -607,7 +616,7 @@
                 date: meta.date,
                 last_update: meta.updated,
                 title: meta.title,
-                authors: meta.authors,
+                people: meta.people,
                 topics: meta.topics,
                 element: null // Initialize element as null
             }));
@@ -621,6 +630,7 @@
                 try {
                     const html = await fetchArticleHTML(article.slug);
                     article.element = parseArticleFragment(html);
+                    setArticleMetadata(article.element, article);
                 } catch (error) {
                     console.error(`Failed to fetch article content for ${article.slug}:`, error);
                     // Optionally create an error element to display later
@@ -647,7 +657,9 @@
             let filteredArticles = state.articles;
             if (state.filterRegex) {
                 filteredArticles = state.articles.filter(article => {
-                    const rowString = `${article.date};${article.last_update};${article.title};${article.authors};${article.topics}`;
+                    const rowString = `date:${article.date};update:${article.last_update};title:${article.title};people:${article.people};topics:${article.topics}`;
+                    console.log(rowString);
+                    console.log(state.filterRegex);
                     return state.filterRegex.test(rowString);
                 });
             }
@@ -673,7 +685,7 @@
                     <td>${highlightMatches(article.date, state.filterRegex)}</td>
                     <td>${highlightMatches(article.last_update, state.filterRegex)}</td>
                     <td>${highlightMatches(article.title, state.filterRegex)}</td>
-                    <td>${highlightMatches(article.authors, state.filterRegex)}</td>
+                    <td>${highlightMatches(article.people, state.filterRegex)}</td>
                     <td>${highlightMatches(article.topics, state.filterRegex)}</td>
                 </tr>
             `).join('');
@@ -715,7 +727,7 @@
             const metaContainer = articleElement.querySelector('.post-meta');
             if (!metaContainer) return; // If an article has no meta section, do nothing.
 
-            const { date, updated, authors, topics } = articleElement.dataset;
+            const { date, updated, people, topics } = articleElement.dataset;
             let metaHTML = '';
 
             // Date and Updated Date
@@ -723,15 +735,15 @@
                 let dateHTML = `<div><time class="post-date">${date}</time>`;
                 // Only show 'updated' if it exists and is different from the original date
                 if (updated && updated !== date) {
-                    dateHTML += `, updated on <time class="post-updated">${updated}</time>`;
+                    dateHTML += `, updated <time class="post-updated">${updated}</time>`;
                 }
                 dateHTML += `</div>`;
                 metaHTML += dateHTML;
             }
 
-            // Authors
-            if (authors) {
-                metaHTML += `<div class="post-authors">${authors}</div>`;
+            // People
+            if (people) {
+                metaHTML += `<div class="post-people">${people}</div>`;
             }
 
             // Topics 
@@ -781,6 +793,7 @@
                 // Content not ready or article not in manifest (deep link), fetch it now
                 const html = await fetchArticleHTML(slug);
                 const element = parseArticleFragment(html);
+                setArticleMetadata(element, article);
                 elements.articleContainer.innerHTML = element ? element.outerHTML : 'Article not found.';
                 // If the article was in the manifest, store the fetched element
                 if (article) {
@@ -875,9 +888,9 @@
                     // Support /pattern/flags format
                     const match = value.match(/^\/(.*)\/([gimyusv]*)$/);
                     if (match) {
-                        state.filterRegex = new RegExp(match[1], match[2] + (match[2].includes('g') ? '' : 'g'));
+                        state.filterRegex = new RegExp(match[1], match[2]);
                     } else {
-                        state.filterRegex = new RegExp(value, 'gi'); // Default to global, case-insensitive
+                        state.filterRegex = new RegExp(value, 'i'); // Default to global, case-insensitive
                     }
                     elements.filterInput.style.color = '';
                 } catch (err) {
