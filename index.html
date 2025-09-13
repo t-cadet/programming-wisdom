@@ -569,8 +569,8 @@
         }
 
         function parseArticleFragment(html) {
-            const doc = new DOMParser().parseFromString(html, 'text/html');
-            return doc.querySelector('article.post');
+            const fragment = document.createRange().createContextualFragment(html);
+            return fragment;
         }
 
         function setArticleMetadata(article, metadata) {
@@ -584,30 +584,38 @@
 
         async function fetchAllArticles() {
             const manifest = [
+              <!-- { -->
+                <!-- "slug": "2025-08-10-c-tokenizer-deep-dive", -->
+                <!-- "title": "A Deep Dive into C Tokenization for Syntax Highlighting", -->
+                <!-- "date": "2025-08-10", -->
+                <!-- "updated": "2025-08-10", -->
+                <!-- "people": "@Jane Doe", -->
+                <!-- "topics": "#programming #c #parsing #syntax-highlighting" -->
+              <!-- }, -->
+              <!-- { -->
+                <!-- "slug": "2025-08-03-handmade-hero-174", -->
+                <!-- "title": "Handmade Hero Day 174: Adding Sparse Unicode Support", -->
+                <!-- "date": "2025-08-03", -->
+                <!-- "updated": "2025-08-10", -->
+                <!-- "people": "@Casey Muratori", -->
+                <!-- "topics": "#unicode #handmade-hero #tgame-dev" -->
+              <!-- }, -->
+              <!-- { -->
+                <!-- "slug": "2025-07-25-spa-architecture-thoughts", -->
+                <!-- "title": "Thoughts on Minimalist SPA Architecture", -->
+                <!-- "date": "2025-07-25", -->
+                <!-- "updated": "2025-07-25", -->
+                <!-- "people": "@Jane Doe", -->
+                <!-- "topics": "#web-dev #javascript #architecture" -->
+              <!-- }, -->
               {
-                "slug": "2025-08-10-c-tokenizer-deep-dive",
-                "title": "A Deep Dive into C Tokenization for Syntax Highlighting",
-                "date": "2025-08-10",
-                "updated": "2025-08-10",
-                "people": "@Jane Doe",
-                "topics": "#programming #c #parsing #syntax-highlighting"
+                "slug": "2025-09-14-hello-world",
+                "title": "Hello, World!",
+                "date": "2025-09-14",
+                "updated": "2025-09-14",
+                "people": "@op",
+                "topics": "#lore"
               },
-              {
-                "slug": "2025-08-03-handmade-hero-174",
-                "title": "Handmade Hero Day 174: Adding Sparse Unicode Support",
-                "date": "2025-08-03",
-                "updated": "2025-08-10",
-                "people": "@Casey Muratori",
-                "topics": "#unicode #handmade-hero #tgame-dev"
-              },
-              {
-                "slug": "2025-07-25-spa-architecture-thoughts",
-                "title": "Thoughts on Minimalist SPA Architecture",
-                "date": "2025-07-25",
-                "updated": "2025-07-25",
-                "people": "@Jane Doe",
-                "topics": "#web-dev #javascript #architecture"
-              }
             ];
 
             // 1. Immediately populate state with manifest data for a fast initial render
@@ -630,7 +638,6 @@
                 try {
                     const html = await fetchArticleHTML(article.slug);
                     article.element = parseArticleFragment(html);
-                    setArticleMetadata(article.element, article);
                 } catch (error) {
                     console.error(`Failed to fetch article content for ${article.slug}:`, error);
                     // Optionally create an error element to display later
@@ -773,6 +780,7 @@
         }
 
         function showIndexView() {
+            elements.articleContainer.innerHTML = "";
             elements.indexView.style.display = 'block';
             elements.articleView.style.display = 'none';
             if (location.hash) {
@@ -794,27 +802,27 @@
 
             const article = state.articles.find(a => a.slug === slug);
 
-            if (article && article.element) {
-                // Content was already pre-fetched
-                elements.articleContainer.innerHTML = article.element.outerHTML;
-            } else {
-                // Content not ready or article not in manifest (deep link), fetch it now
+            if (article && !article.element) {
                 const html = await fetchArticleHTML(slug);
-                const element = parseArticleFragment(html);
-                setArticleMetadata(element, article);
-                elements.articleContainer.innerHTML = element ? element.outerHTML : 'Article not found.';
-                // If the article was in the manifest, store the fetched element
-                if (article) {
-                    article.element = element;
-                }
+                article.element = parseArticleFragment(html);
             }
+
+            if (article && article.element) {
+                const elementToAppend = article.element.cloneNode(true);
+                const articleElement = elementToAppend.querySelector('article.post');
+                if (articleElement) { // Safety check on the clone
+                    setArticleMetadata(articleElement, article);
+                }
+                elements.articleContainer.appendChild(elementToAppend);
+            } else {
+                elements.articleContainer.appendChild("Article not found");
+            }
+                // Content was already pre-fetched
             
             generatePostMeta(elements.articleContainer.querySelector('.post'));
             highlightAllCodeBlocks();
-            
             elements.articleSpinner.style.display = 'none';
             window.scrollTo(0, 0);
-            location.hash = `#${slug}`;
         }
         
         function handleRouteChange() {
@@ -930,7 +938,7 @@
         function handleTableRowClick(e) {
             const slug = e.target.closest('tr')?.dataset?.slug;
             if (slug) {
-                showArticleView(slug);
+                location.hash = `#${slug}`;
             }
         }
         
@@ -984,6 +992,7 @@
 
         // #region --- 9. Initialization ---
         async function init() {
+            elements.articleContainer.innerHTML = "";
             setupThemeControls();
 
             // fetchAllArticles now handles the initial render and then fetches content.

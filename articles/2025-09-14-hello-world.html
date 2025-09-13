@@ -1,0 +1,192 @@
+<article class="post">
+  <h1 class="post-title">Hello, World!</h1>
+  <h2 class="post-subtitle">An Introduction</h2>
+  <div class="post-meta"> </div>
+  <p>Welcome to the <span style="font-weight: bold">Programming Wisdom</span> project ..</p>
+  <canvas id="hello-world-canvas" width=350 height=350></canvas>
+  <p>.. have fun exploring <a href="/"> ▽</a></p>
+</article>
+<script>
+// Wrap everything in a self-invoking function (IIFE) to create a private scope
+// and prevent variables from leaking into the global `window` object.
+(function() {
+    // --- 1. SETUP & DOM REFERENCES ---
+    const articleRoot = document.querySelector('#hello-world-canvas').closest('article.post');
+    const canvas = document.getElementById('hello-world-canvas');
+
+    if (!articleRoot || !canvas) {
+        console.error("Required DOM element for the animation not found.");
+        return;
+    }
+    const gl = canvas.getContext('webgl');
+    if (!gl) {
+        console.error("WebGL not supported or available.");
+        return;
+    }
+
+    // --- 2. STATE VARIABLES ---
+    // All resources that need to be managed and cleaned up are declared here.
+    let animationFrameId = null;
+    let program = null;
+    let vertexShader = null;
+    let fragmentShader = null;
+    let positionBuffer = null;
+
+    // --- 3. LIFECYCLE MANAGEMENT ---
+
+    // The single function to tear down everything.
+    function cleanup() {
+        console.log("Article removed from DOM. Cleaning up WebGL resources...");
+
+        // A. Stop the animation loop immediately. This is the most critical step.
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+        }
+
+        // B. Delete all WebGL objects.
+        if (program) {
+            gl.deleteProgram(program);
+            program = null;
+        }
+        if (vertexShader) {
+            gl.deleteShader(vertexShader);
+            vertexShader = null;
+        }
+        if (fragmentShader) {
+            gl.deleteShader(fragmentShader);
+            fragmentShader = null;
+        }
+        if (positionBuffer) {
+            gl.deleteBuffer(positionBuffer);
+            positionBuffer = null;
+        }
+
+        // C. Force the WebGL context to be destroyed and release GPU resources.
+        const loseContextExtension = gl.getExtension('WEBGL_lose_context');
+        if (loseContextExtension) {
+            loseContextExtension.loseContext();
+        }
+
+        console.log("WebGL cleanup complete.");
+    }
+
+    // This observer automatically calls cleanup() when the article is removed.
+    const observer = new MutationObserver((mutationsList, obs) => {
+        for (const mutation of mutationsList) {
+            if (mutation.removedNodes.length > 0) {
+                mutation.removedNodes.forEach(removedNode => {
+                    if (removedNode === articleRoot) {
+                        cleanup();
+                        obs.disconnect(); // Stop observing once cleaned up.
+                    }
+                });
+            }
+        }
+    });
+
+    // Start observing the parent element for removals.
+    if (articleRoot.parentElement) {
+        observer.observe(articleRoot.parentElement, { childList: true });
+    }
+
+    // --- 4. WEBGL INITIALIZATION ---
+
+    const vsSource = `
+        attribute vec2 a_position;
+        void main() {
+            gl_Position = vec4(a_position, 0.0, 1.0);
+        }
+    `;
+    const fsSource = `
+        precision mediump float;
+        uniform vec2 u_resolution;
+        uniform float u_time;
+
+        vec3 hsv2rgb(vec3 c) {
+            vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+            vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+            return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+        }
+        void main() {
+            vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+            float r = length(uv);
+            float angle = atan(uv.y, uv.x);
+            float mag = 0.05;
+            float ringRadius = 3.0*(2.0*mag + (sin(u_time))*mag);
+            float ringWidth = 0.05 - 0.45*mag*mod(u_time,1.0+0.015*cos(u_time*0.01));
+            float outerEdge = ringRadius + ringWidth / 2.0;
+            float innerEdge = ringRadius - ringWidth / 2.0;
+            float edgeSoftness = 0.005; 
+            float ringMask = smoothstep(outerEdge, outerEdge - edgeSoftness, r) *
+                             smoothstep(innerEdge, innerEdge + edgeSoftness, r);
+            float hue = (angle + 3.14159) / (2.0 * 3.14159);
+            hue = mod(hue + sin(u_time * 0.35), 1.0);
+            vec3 color = hsv2rgb(vec3(hue, 0.8, 1.0));
+            vec3 finalColor = color * ringMask;
+            gl_FragColor = vec4(finalColor, ringMask);
+        }`;
+
+    // Assign created resources to our state variables so they can be cleaned up.
+    vertexShader = compileShader(gl, gl.VERTEX_SHADER, vsSource);
+    fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, fsSource);
+    program = createProgram(gl, vertexShader, fragmentShader);
+
+    positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    const positions = [-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1];
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+    // --- 5. RENDER LOOP ---
+
+    function render(time) {
+        time *= 0.001; // convert time to seconds
+
+        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.useProgram(program);
+        const positionAttributeLocation = gl.getAttribLocation(program, "a_position");
+        gl.enableVertexAttribArray(positionAttributeLocation);
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+        gl.uniform2f(gl.getUniformLocation(program, "u_resolution"), gl.canvas.width, gl.canvas.height);
+        gl.uniform1f(gl.getUniformLocation(program, "u_time"), time);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+        // CRITICAL: Store the ID so we can cancel the loop in the cleanup function.
+        animationFrameId = requestAnimationFrame(render);
+    }
+
+    // --- 6. START & HELPER FUNCTIONS ---
+
+    // Start the animation loop.
+    animationFrameId = requestAnimationFrame(render);
+
+    // Helper functions are now private to this module.
+    function compileShader(gl, type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            const error = gl.getShaderInfoLog(shader);
+            gl.deleteShader(shader);
+            throw new Error('Shader compile error: ' + error);
+        }
+        return shader;
+    }
+
+    function createProgram(gl, vertexShader, fragmentShader) {
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            const error = gl.getProgramInfoLog(program);
+            gl.deleteProgram(program);
+            throw new Error('Program link error: ' + error);
+        }
+        return program;
+    }
+
+})(); // Immediately invoke the function
+</script>
