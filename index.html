@@ -120,6 +120,7 @@
         .articles-table {
             width: 100%;
             border-collapse: collapse;
+            table-layout: fixed;
         }
         .articles-table th {
             position: sticky;
@@ -141,8 +142,22 @@
         .articles-table tbody tr:last-child { border-bottom: none; }
         .articles-table tbody tr:hover { background-color: color-mix(in srgb, var(--accent) 10%, var(--card-bg)); }
         .articles-table tbody tr:focus { outline: none; box-shadow: var(--focus-ring); }
+        .articles-table td {
+          padding: 0.75rem;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
 
-        .articles-table td { padding: 0.75rem; }
+        .articles-table td:hover {
+          overflow-x: auto;
+          text-overflow: clip;
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+        }
+        .articles-table td:hover::-webkit-scrollbar {
+          display: none;
+        }
         .articles-table td .highlight { background-color: color-mix(in srgb, var(--accent) 40%, transparent); }
         /* #endregion */
 
@@ -317,17 +332,24 @@
             <!-- Index View -->
             <div id="index-view">
                 <div class="filter-controls">
-                    <input type="search" id="filter-input" placeholder="Regex filter: date:2025.*;update:.*;title:Hello.*;people:@OP;topics:.*;">
+                    <input type="search" id="filter-input" placeholder="Regex filter: date:2025.*;update:.*;people:@OP;title:Hello.*;topics:.*;">
                     <span id="match-count"></span>
                 </div>
                 <div class="table-container" id="table-container">
                     <table class="articles-table">
+                        <colgroup>
+                            <col style="width:  9%">
+                            <col style="width:  9%">
+                            <col style="width: 20%">
+                            <col style="width: 33%">
+                            <col style="width: 34%">
+                        </colgroup>
                         <thead>
                             <tr>
                                 <th data-sort="date">Date</th>
                                 <th data-sort="last_update">Update</th>
-                                <th data-sort="title">Title</th>
                                 <th data-sort="people">People</th>
+                                <th data-sort="title">Title</th>
                                 <th data-sort="topics">Topics</th>
                             </tr>
                         </thead>
@@ -392,7 +414,7 @@
         const C_KEYWORDS = new Set(['auto', 'break', 'case', 'char', 'const', 'continue', 'default', 'do', 'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if', 'int', 'long', 'register', 'return', 'short', 'signed', 'sizeof', 'static', 'struct', 'switch', 'typedef', 'union', 'unsigned', 'void', 'volatile', 'while']);
 
         const state = {
-            articles: [], // { slug, date, updated, title, people, topics, element }[]
+            articles: [], // { slug, date, updated, people, title, topics, element }[]
             sort: { column: 'last_update', order: 'asc' },
             filterRegex: null,
             focusedRowIndex: -1,
@@ -623,7 +645,7 @@
                 "date": "2025-09-18",
                 "updated": "2025-09-18",
                 "people": "@cmuratori",
-                "topics": "#wisdom #comments"
+                "topics": "#wisdom #comments #handmade hero"
               },
             ];
 
@@ -673,7 +695,7 @@
             let filteredArticles = state.articles;
             if (state.filterRegex) {
                 filteredArticles = state.articles.filter(article => {
-                    const rowString = `date:${article.date};update:${article.last_update};title:${article.title};people:${article.people};topics:${article.topics}`;
+                    const rowString = `date:${article.date};update:${article.last_update};people:${article.people};title:${article.title};topics:${article.topics}`;
                     return state.filterRegex.test(rowString);
                 });
             }
@@ -698,8 +720,8 @@
                 <tr data-slug="${article.slug}" tabindex="0" data-index="${index}">
                     <td>${highlightMatches(article.date, state.filterRegex)}</td>
                     <td>${highlightMatches(article.last_update, state.filterRegex)}</td>
-                    <td>${highlightMatches(article.title, state.filterRegex)}</td>
                     <td>${highlightMatches(article.people, state.filterRegex)}</td>
+                    <td>${highlightMatches(article.title, state.filterRegex)}</td>
                     <td>${highlightMatches(article.topics, state.filterRegex)}</td>
                 </tr>
             `).join('');
@@ -1016,6 +1038,11 @@
             elements.blogTitle.addEventListener('click', (e) => { e.preventDefault(); showIndexView(); });
 
             document.addEventListener('keydown', handleKeyboardShortcuts);
+            document.querySelectorAll('.articles-table td').forEach(td => {
+              td.addEventListener('mouseleave', () => {
+                td.scrollLeft = 0;
+              });
+            });
             window.addEventListener('hashchange', handleRouteChange);
             
             // Initial route handling
