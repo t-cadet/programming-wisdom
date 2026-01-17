@@ -9,7 +9,7 @@
         /* #region --- 1. CSS Variables & Theme --- */
         :root {
             --scale: 1.0;
-            --font-size-base: calc(16px * var(--scale));
+            --font-size-base: calc(18px * var(--scale));
 
             /* Default Theme: Warm Sand */
             --bg: #f4ead6;
@@ -85,14 +85,14 @@
             width: 100%;
             max-width: 1600px;
             margin: 0 auto;
-            padding: 1rem 2rem;
+            padding: 1rem 0;
         }
 
         footer { text-align: center; font-size: 0.9rem; color: var(--muted); }
         /* #endregion */
 
         /* #region --- 3. Index View & Table --- */
-        #index-view { padding-top: 1rem; }
+        #index-view { padding: 0 2rem; }
         .filter-controls {
             display: flex;
             gap: 1rem;
@@ -164,8 +164,9 @@
         /* #region --- 4. Article View & Sidebar --- */
         #article-view {
             display: none; /* Hidden by default */
-            grid-template-columns: 420px 1fr;
-            gap: 2.5rem;
+            grid-template-columns: 400px 1fr;
+            gap: 2rem;
+            padding-right: 2rem;
         }
 
         #article-sidebar {
@@ -178,7 +179,7 @@
         }
 
         #sidebar-menu .articles-table {
-            font-size: 0.9rem;
+            font-size: 0.75rem;
             table-layout: fixed; /* Important for predictable column widths */
             width: 100%;
         }
@@ -200,29 +201,180 @@
             text-overflow: ellipsis;
         }
 
-        #article-container .post { max-width: 800px; }
+        #article-container .post { max-width: 900px; }
+
+        .floating-wide {
+            margin: 1rem 0;
+            position: relative;
+            left: calc(50vw - (400px + 2rem + max(0px, (100vw - 1600px) / 2)));
+            transform: translateX(-50%);
+            width: fit-content;
+            min-width: 100%;
+            max-width: 100vw;
+            z-index: 10;
+            box-shadow: 0 15px 45px rgba(0,0,0,0.15);
+        }
+
+        .floating-wide .figure-title {
+            margin: 0;
+            padding: 1rem 1.5rem;
+            background-color: color-mix(in srgb, var(--code-bg) 80%, black);
+            border-left: none;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            /* A subtle variation for the dark background header */
+            color: color-mix(in srgb, var(--code-text), var(--accent) 40%);
+        }
+        
+        .floating-wide .figure-title::before {
+            display: none;
+        }
 
         /* Responsive: Collapse sidebar */
         @media (max-width: 900px) {
-            #article-view { grid-template-columns: 1fr; }
+            #article-view { grid-template-columns: 1fr; padding-right: 0; }
             #article-sidebar { /* Becomes a drawer - simplified for this spec */
                 display: none; /* A real implementation would use a toggle button */
+            }
+            .floating-wide {
+                width: 100vw;
+                max-width: 100vw;
+                border-radius: 0;
+                box-shadow: none;
+                margin: 1.5rem 0;
             }
         }
         /* #endregion */
 
         /* #region --- 5. Article & Authoring Classes --- */
-        .post-title { font-size: 2.5rem; color: var(--heading-text); margin-bottom: 0; }
-        .post-subtitle { font-size: 1.5rem; color: var(--muted); margin-top: 0.5rem; font-weight: normal; }
+        .post-title { font-size: 2.1rem; color: var(--heading-text); margin-bottom: 0; }
+        .post-subtitle { font-size: 1.3rem; color: var(--muted); margin-top: 0.5rem; font-weight: normal; }
         .post-meta { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; margin: 1.5rem 0; color: var(--muted); font-size: 0.9rem; }
         .post-topics .tag { background-color: color-mix(in srgb, var(--accent) 20%, transparent); padding: 0.1rem 0.5rem; border-radius: 4px; }
-        .lead { font-size: 1.2rem; color: color-mix(in srgb, var(--text) 85%, transparent); }
+        .lead { font-size: 1.15rem; color: color-mix(in srgb, var(--text) 85%, transparent); }
+
+        .next-time {
+            font-weight: bold;
+            color: var(--accent);
+            margin-top: 2rem;
+            display: block;
+            font-size: 1.1rem;
+        }
+
+        .inline-string {
+            font-family: ui-monospace, "SF Mono", Consolas, monospace;
+            font-size: 0.95rem;
+        }
+
+        code:not(pre code) {
+            background-color: color-mix(in srgb, var(--accent) 12%, var(--card-bg));
+            padding: 0.1rem 0.3rem;
+            border-radius: 4px;
+            font-family: ui-monospace, "SF Mono", Consolas, monospace;
+            font-size: 0.9em;
+        }
+
+        .muted-note {
+            font-size: 0.95rem;
+            color: var(--muted);
+            font-style: italic;
+            display: block;
+            margin-top: 0.5rem;
+        }
+
+        /* Footnotes */
+        .footnotes {
+            margin-top: 4rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border-color);
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+        .footnotes h2 {
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 1.5rem;
+            color: var(--muted);
+        }
+        .footnotes ol { padding-left: 1.2rem; }
+        .footnotes li { margin-bottom: 1.5rem; line-height: 1.5; }
+        .footnotes blockquote { 
+            font-size: 0.8rem; 
+            margin: 0.5rem 0; 
+            padding: 0.5rem 1rem; 
+        }
+        
+        .footnote-ref {
+            text-decoration: none;
+            font-size: 0.7rem;
+            font-weight: bold;
+            color: var(--accent);
+            vertical-align: super;
+            padding: 0 0.2rem;
+        }
+        .footnote-ref:hover { text-decoration: underline; }
+        
+        .footnote-backlink {
+            text-decoration: none;
+            color: var(--accent);
+            font-weight: bold;
+            margin-left: 0.3rem;
+        }
+        .footnote-backlink:hover { text-decoration: underline; }
+
+        .figure-title {
+            font-weight: bold;
+            font-size: 0.9rem;
+            /* A subtle variation of the text color, tinted with the accent */
+            color: color-mix(in srgb, var(--text), var(--accent) 5%);
+            margin-top: 1rem;
+            margin-bottom: 0.3rem;
+            letter-spacing: 0.05em;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .figure-title::before {
+            content: "";
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background-color: currentColor;
+            border-radius: 2px;
+        }
+
+        blockquote {
+            margin: 1.5rem 0;
+            padding: 1rem 1.5rem;
+            background-color: color-mix(in srgb, var(--accent) 5%, var(--card-bg));
+            border-left: 4px solid var(--accent);
+            border-radius: 0 4px 4px 0;
+            font-style: italic;
+            color: color-mix(in srgb, var(--text) 90%, transparent);
+            line-height: 1.6;
+        }
+        blockquote p { margin: 0; }
+        blockquote p + p { margin-top: 1rem; }
 
         a { color: var(--link-color); text-decoration: none; }
         a:hover { text-decoration: underline; }
 
         h1, h2, h3 { color: var(--heading-text); }
-        hr { border: 0; border-top: 1px solid var(--border-color); }
+        hr {
+            border: 0;
+            height: 3rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 1rem 0;
+        }
+        hr::after {
+            content: "···";
+            color: color-mix(in srgb, var(--text), var(--accent) 30%);
+            font-size: 2.5rem;
+            letter-spacing: 0.75rem;
+            padding-left: 0.75rem; /* Balance the letter-spacing */
+        }
         /* #endregion */
 
         /* #region --- 6. Code Blocks & Highlighting --- */
@@ -230,10 +382,14 @@
             background-color: var(--code-bg);
             color: var(--code-text);
             padding: 1rem;
-            border-radius: 4px;
+            border-radius: 8px;
             overflow-x: auto;
-            font-family: 'SF Mono', 'Consolas', 'Menlo', monospace;
-            font-size: 0.9rem;
+            font-family: ui-monospace, "SF Mono", Consolas, "Liberation Mono", Menlo, Monaco, "Courier New", monospace;
+            font-size: 0.92rem;
+            white-space: pre;
+            tab-size: 2;
+            -moz-tab-size: 2;
+            line-height: 1.3;
         }
         code { font-family: inherit; }
         pre code { padding: 0; background: none; }
@@ -607,37 +763,13 @@
 
         async function fetchAllArticles() {
             const manifest = [
-              <!-- { -->
-                <!-- "slug": "2025-08-10-c-tokenizer-deep-dive", -->
-                <!-- "title": "A Deep Dive into C Tokenization for Syntax Highlighting", -->
-                <!-- "date": "2025-08-10", -->
-                <!-- "updated": "2025-08-10", -->
-                <!-- "people": "@Jane Doe", -->
-                <!-- "topics": "#programming #c #parsing #syntax-highlighting" -->
-              <!-- }, -->
-              <!-- { -->
-                <!-- "slug": "2025-08-03-handmade-hero-174", -->
-                <!-- "title": "Handmade Hero Day 174: Adding Sparse Unicode Support", -->
-                <!-- "date": "2025-08-03", -->
-                <!-- "updated": "2025-08-10", -->
-                <!-- "people": "@Casey Muratori", -->
-                <!-- "topics": "#unicode #handmade-hero #tgame-dev" -->
-              <!-- }, -->
-              <!-- { -->
-                <!-- "slug": "2025-07-25-spa-architecture-thoughts", -->
-                <!-- "title": "Thoughts on Minimalist SPA Architecture", -->
-                <!-- "date": "2025-07-25", -->
-                <!-- "updated": "2025-07-25", -->
-                <!-- "people": "@Jane Doe", -->
-                <!-- "topics": "#web-dev #javascript #architecture" -->
-              <!-- }, -->
               {
-                "slug": "2025-09-14-hello-world",
-                "title": "Hello, World!",
-                "date": "2025-09-14",
-                "updated": "2025-09-14",
+                "slug": "2026-01-17-gathering-linux-syscall-numbers",
+                "title": "Gathering Linux Syscall Numbers in a C Table",
+                "date": "2026-01-17",
+                "updated": "2026-01-17",
                 "people": "@op",
-                "topics": "#lore"
+                "topics": "#linux #syscalls #c"
               },
               {
                 "slug": "2025-09-18-wise-commenting",
@@ -646,6 +778,14 @@
                 "updated": "2025-09-18",
                 "people": "@cmuratori",
                 "topics": "#wisdom #comments #handmade hero"
+              },
+              {
+                "slug": "2025-09-14-hello-world",
+                "title": "Hello, World!",
+                "date": "2025-09-14",
+                "updated": "2025-09-14",
+                "people": "@op",
+                "topics": "#lore"
               },
             ];
 
@@ -1036,6 +1176,25 @@
             elements.tableBody.addEventListener('click', handleTableRowClick);
             elements.sidebarMenu.addEventListener('click', handleTableRowClick);
             elements.blogTitle.addEventListener('click', (e) => { e.preventDefault(); showIndexView(); });
+
+            // Handle internal links (footnotes) to prevent the router from misinterpreting them
+            elements.articleContainer.addEventListener('click', (e) => {
+                const link = e.target.closest('a');
+                if (link && link.getAttribute('href')?.startsWith('#')) {
+                    const id = link.getAttribute('href').substring(1);
+                    const target = elements.articleContainer.querySelector(`#${id}`);
+                    if (target) {
+                        e.preventDefault();
+                        const headerHeight = elements.header.offsetHeight + 20;
+                        const targetPosition = target.getBoundingClientRect().top + window.pageYOffset - headerHeight;
+                        
+                        window.scrollTo({
+                            top: targetPosition,
+                            behavior: 'smooth'
+                        });
+                    }
+                }
+            });
 
             document.addEventListener('keydown', handleKeyboardShortcuts);
             document.querySelectorAll('.articles-table td').forEach(td => {

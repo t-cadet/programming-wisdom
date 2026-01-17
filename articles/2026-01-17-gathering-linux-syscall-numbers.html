@@ -1,0 +1,182 @@
+<article class="post">
+  <h1 class="post-title">Gathering Linux Syscall Numbers in a C Table</h1>
+  <div class="post-meta"> </div>
+
+  <p>I've been trying to program without libc, and on Linux that means calling syscalls directly.
+  Syscalls are the lowest userland layer; they are basically the ground of the Linux userland.</p>
+  
+  <p>In an ideal world, there would be a header-only C library provided by the Linux kernel;
+  we would include that file and be done with it. As it turns out, there is no such file,
+  and interfacing with syscalls is complicated.</p>
+
+  <p>Syscalls are special; to syscall, one has to put the syscall number in a register, the arguments in other registers, and issue an assembly instruction.</p>
+
+  <p>Okay, that said, how hard can it be to create my own header-only syscall library?</p>
+
+  <p>First things first: I need to get all the syscall numbers.</p>
+
+  <p class="figure-title">My Linux syscall table. Organized thematically for browsing. Valid C code, cross-architecture.</p>
+  <div class="floating-wide">
+  <pre><code class="lang-c">/*╔════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+/*║                                                  LINUX SYSCALL TABLE                                                   ║
+/*╠════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╣
+/*║                                                      Section List                                                      ║
+/*╟────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╢
+/*║  1. PROCESS & THREAD LIFECYCLE         11. SIGNALS                            21. NAMESPACES & CONTAINERS              ║
+/*║  2. PROCESS ATTRIBUTES & CONTROL       12. PIPES & FIFOs                      22. PROCESS INSPECTION & CONTROL         ║
+/*║  3. SCHEDULING & PRIORITIES            13. INTER-PROCESS COMMUNICATION        23. SYSTEM INFORMATION                   ║
+/*║  4. MEMORY MANAGEMENT                  14. SOCKETS & NETWORKING               24. KERNEL MODULES                       ║
+/*║  5. FILE I/O OPERATIONS                15. ASYNCHRONOUS I/O                   25. SYSTEM CONTROL & ADMINISTRATION      ║
+/*║  6. FILE DESCRIPTOR MANAGEMENT         16. TIME & CLOCKS                      26. PERFORMANCE MONITORING & TRACING     ║
+/*║  7. FILE METADATA                      17. RANDOM NUMBERS                     27. DEVICE & HARDWARE ACCESS             ║
+/*║  8. DIRECTORY & NAMESPACE OPERATIONS   18. USER & GROUP IDENTITY              28. ARCHITECTURE-SPECIFIC OPERATIONS     ║
+/*║  9. FILE SYSTEM OPERATIONS             19. CAPABILITIES & SECURITY            29. ADVANCED EXECUTION CONTROL           ║
+/*║ 10. FILE SYSTEM MONITORING             20. RESOURCE LIMITS & ACCOUNTING       30. LEGACY, OBSOLETE & UNIMPLEMENTED     ║
+/*╠════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╣
+/*║                                             1. PROCESS & THREAD LIFECYCLE                                              ║
+/*║                           Creation, execution, termination, and reaping of processes/threads                           ║
+/*╠════════════════════════════════════════════════════════╦═════════╤═════════╤═════════╤═════════╤═════════╤═════════════╣
+/*║                      Syscall Name                      ║ x86_64  │  arm64  │ riscv64 │ x86_32  │  arm32  │   riscv32   ║
+/*╟────────────────────────────────────────────────────────╨─────────┴─────────┴─────────┴─────────┴─────────┴─────────────╢
+/*║*/ #define NR_fork_linux                         BY_ARCH(       57,     void,     void,        2,        2,     void) //║
+/*║*/ #define NR_vfork_linux                        BY_ARCH(       58,     void,     void,      190,      190,     void) //║
+/*║*/ #define NR_clone_linux                        BY_ARCH(       56,      220,      220,      120,      120,      220) //║
+/*║*/ #define NR_clone3_linux                       BY_ARCH(      435,      435,      435,      435,      435,      435) //║
+/*║*/ #define NR_execve_linux                       BY_ARCH(       59,      221,      221,       11,       11,      221) //║
+/*║*/ #define NR_execveat_linux                     BY_ARCH(      322,      281,      281,      358,      387,      281) //║
+/*║*/ #define NR_exit_linux                         BY_ARCH(       60,       93,       93,        1,        1,       93) //║
+/*║*/ #define NR_exit_group_linux                   BY_ARCH(      231,       94,       94,      252,      248,       94) //║
+/*║*/ #define NR_wait4_linux                        BY_ARCH(       61,      260,      260,      114,      114,     void) //║
+/*║*/ #define NR_waitid_linux                       BY_ARCH(      247,       95,       95,      284,      280,       95) //║
+/*║*/ #define NR_waitpid_linux                      BY_ARCH(     void,     void,     void,        7,     void,     void) //║
+/*╠════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╣</code></pre>
+</div>
+
+  <p><span class="muted-note">Full table available at: <a href="https://github.com/t-cadet/c/blob/main/linux.h">https://github.com/t-cadet/c/blob/main/linux.h</a><br>
+    (Note: I am still early in my exploration of raw syscalls; there may be inaccuracies or other mistakes.)</span></p>
+
+  <p>To my surprise, gathering Linux syscall numbers is a rather tortuous process.</p>
+
+  <p>I started my journey by googling <span class="inline-string">"linux syscall numbers"</span> with the following results:<sup><a href="#fn1" id="ref1" class="footnote-ref">1</a></sup></p>
+
+  <ul>
+    <li><a href="https://filippo.io/linux-syscall-table/">Searchable Linux Syscall Table for x86_64</a></li>
+    <li><a href="https://www.chromium.org/chromium-os/developer-library/reference/linux-constants/syscalls/">Chromium OS Docs - Linux System Call Table</a></li>
+    <li><a href="https://gpages.juszkiewicz.com.pl/syscalls-table/syscalls.html">Linux kernel system calls for all architectures</a></li>
+  </ul>
+
+  <p>You may notice that all the search results are third-party.</p>
+
+  <p>Is it a matter of going directly to the kernel docs website?
+  I tried, but found nothing very relevant to gathering syscall numbers on <a href="https://docs.kernel.org/userspace-api/index.html">the kernel docs website</a>, nor in the <a href="https://man7.org/linux/man-pages/man2/syscalls.2.html">manual</a>.</p>
+
+  <p>Okay, so back to third-party results. The syscall tables they provide look promising, until I notice something amiss: there are <em>multiple</em> tables, each with different syscall numbers.
+  What's going on there?</p>
+
+  <p>Sure enough, the Chromium link has a stark warning:</p>
+
+  <blockquote>
+    <p>[Syscall numbers] vary significantly across architectures/ABIs, both in mappings and in actual name.</p>
+  </blockquote>
+
+  <p>Really? Different syscall numbers on different architectures?</p>
+
+  <p>I had to cross-check various resources to convince myself that this is not an artifact introduced by third-party resources.
+  It is not: the answer on <a href="https://unix.stackexchange.com/questions/338650/why-are-linux-system-call-numbers-in-x86-and-x86-64-different">this Stack Exchange question</a> suggests that at least for the discrepancies between x86 32 and 64 bits, it is a matter of cacheline usage optimization. For other architectures, AI suggests that in the 90s architecture ports (like Alpha, MIPS, or SPARC) ignored Linus' original x86 numbering and instead copied the syscall tables of proprietary Unixes (like OSF/1, IRIX, or Solaris)
+  to allow them to run those non-Linux binaries natively (but I could not find any source to corroborate these AI claims).</p>
+
+  <p>Anyway, after a detour through the libc syscall tables (<a href="https://git.musl-libc.org/cgit/musl/tree/arch">musl</a>, <a href="https://sourceware.org/git/?p=glibc.git;a=tree;f=sysdeps/unix/sysv/linux;hb=HEAD">glibc</a>):</p>
+
+  <p class="figure-title">$ head -n 10 musl/arch/arm/bits/syscall.h.in</p>
+<pre><code class="lang-c">#define __NR_restart_syscall	0
+#define __NR_exit	1
+#define __NR_fork	2
+#define __NR_read	3
+#define __NR_write	4
+#define __NR_open	5
+#define __NR_close	6
+#define __NR_creat	8
+#define __NR_link	9
+#define __NR_unlink	10</code></pre>
+
+  <p>I ended up finding the <a href="https://github.com/torvalds/linux/tree/master/arch">primary source in the kernel</a>: .tbl files</p>
+
+  <p class="figure-title">$ find linux/arch -name *.tbl</p>
+<pre><code>linux/arch/microblaze/kernel/syscalls/syscall.tbl
+linux/arch/sparc/kernel/syscalls/syscall.tbl
+linux/arch/x86/entry/syscalls/syscall_64.tbl
+linux/arch/x86/entry/syscalls/syscall_32.tbl
+linux/arch/xtensa/kernel/syscalls/syscall.tbl
+linux/arch/m68k/kernel/syscalls/syscall.tbl
+linux/arch/sh/kernel/syscalls/syscall.tbl
+linux/arch/mips/kernel/syscalls/syscall_n64.tbl
+linux/arch/mips/kernel/syscalls/syscall_n32.tbl
+linux/arch/mips/kernel/syscalls/syscall_o32.tbl
+linux/arch/s390/kernel/syscalls/syscall.tbl
+linux/arch/arm64/tools/syscall_64.tbl
+linux/arch/arm64/tools/syscall_32.tbl
+linux/arch/alpha/kernel/syscalls/syscall.tbl
+linux/arch/arm/tools/syscall.tbl
+linux/arch/parisc/kernel/syscalls/syscall.tbl
+linux/arch/powerpc/kernel/syscalls/syscall.tbl</code></pre>
+
+  <p>This is basically a tab-separated table format, but the optional columns, occasional space instead of tab, legacy ABIs, and duplicated legacy syscalls make it messy to parse:</p>
+
+  <p class="figure-title">$ head -n22 linux/arch/x86/entry/syscalls/syscall_64.tbl</p>
+<pre><code># SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
+#
+# 64-bit system call numbers and entry vectors
+#
+# The format is:
+# &lt;number&gt; &lt;abi&gt; &lt;name&gt; &lt;entry point&gt; [&lt;compat entry point&gt; [noreturn]]
+#
+# The __x64_sys_*() stubs are created on-the-fly for sys_*() system calls
+#
+# The abi is "common", "64" or "x32" for this file.
+#
+0	common	read			sys_read
+1	common	write			sys_write
+2	common	open			sys_open
+3	common	close			sys_close
+4	common	stat			sys_newstat
+5	common	fstat			sys_newfstat
+6	common	lstat			sys_newlstat
+7	common	poll			sys_poll
+8	common	lseek			sys_lseek
+9	common	mmap			sys_mmap
+10	common	mprotect		sys_mprotect</code></pre>
+
+  <p>Also, there are no .tbl files for RISC-V 32 and 64 bits.<sup><a href="#fn2" id="ref2" class="footnote-ref">2</a></sup></p>
+
+  <p>If I understand correctly, the RISC-V tables are generated from a stock list based on x86 numbering with various #defines that enable or disable some syscalls.
+  Since I do not know the right combination of #defines, I went back to glibc and used their RISC-V files; it seemed safer.</p>
+
+  <p>With all the files thus gathered, I could finally parse them with a C script and generate my own implementation of a syscall number table, of which you saw a snippet earlier in the article. The decision of what syscall goes to what section was largely left to an AI, peppered with some of my nitpicks, which seems to have worked out well thanks to the AI's encyclopedic knowledge of all syscalls. For reference, here is the <a href="https://www.seclab.cs.sunysb.edu/sekar/papers/syscallclassif.htm">only taxonomy</a> that a search for <span class="inline-string">"linux syscall taxonomy"</span> turns up.</p>
+
+  <p>I ran into one last complication: not all architectures implement all syscalls, and so some syscall numbers are missing.
+  That was pretty surprising: I was expecting a unified interface across all architectures, with perhaps one or two architecture-specific syscalls to access architecture-specific capabilities; but Linux syscalls are more like Swiss cheese.
+  So I encoded these holes as <code>void</code> in my table to break compilation if they are ever used on the wrong architecture.</p>
+
+  <hr>
+
+  <p>➜ Next time: implementing syscall wrappers in C.</p>
+
+  <section class="footnotes">
+    <h2>Footnotes</h2>
+    <ol>
+      <li id="fn1">
+        I have since found another 3rd party <a href="https://syscalls.mebeim.net/?table=x86/64/x64/latest">syscall table</a> that appears more reliable. Great effort went into generating it, as the description of the <a href="https://github.com/mebeim/systrack">systrack</a> tool by its author on its <a href="https://news.ycombinator.com/item?id=41018135">Hacker News post</a> attests:
+        <blockquote>
+          <p>I am using static analysis of kernel images (vmlinux ELF) that are built with debug information. Each table you see was extracted from a kernel built by my tool, Systrack, that can configure and build kernels that have all the syscalls available. The code is heavily commented and available on GitHub if you are interested: <a href="https://github.com/mebeim/systrack">https://github.com/mebeim/systrack</a></p>
+          <p>I realized soon in the process that simply looking at kernel sources was not enough to extract everything accurately, especially definition locations. I also wanted this to be a tool to extract syscalls actually implemented from a given kernel image, so that's what it does.</p>
+        </blockquote>
+        <a href="#ref1" class="footnote-backlink">↩</a>
+      </li>
+      <li id="fn2">
+        I later found out that the kernel sources contain a generic <code>scripts/syscall.tbl</code> file: "modern" architectures such as RISC-V have a Makefile that lists the relevant ABIs for the architecture, and calls a shell script to filter the table.
+        The Makefile and the script were pretty complicated, so I ended up parsing the generic .tbl file and doing the filtering myself, thus not relying on glibc for syscall numbers.
+        <a href="#ref2" class="footnote-backlink">↩</a>
+      </li>
+    </ol>
+  </section>
+</article>
