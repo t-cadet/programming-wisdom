@@ -50,7 +50,7 @@
         #app {
             display: flex;
             flex-direction: column;
-            min-height: 100vh;
+            min-height: 100%;
         }
 
         header, footer {
@@ -228,21 +228,6 @@
         .floating-wide .figure-title::before {
             display: none;
         }
-
-        /* Responsive: Collapse sidebar */
-        @media (max-width: 900px) {
-            #article-view { grid-template-columns: 1fr; padding-right: 0; }
-            #article-sidebar { /* Becomes a drawer - simplified for this spec */
-                display: none; /* A real implementation would use a toggle button */
-            }
-            .floating-wide {
-                width: 100vw;
-                max-width: 100vw;
-                border-radius: 0;
-                box-shadow: none;
-                margin: 1.5rem 0;
-            }
-        }
         /* #endregion */
 
         /* #region --- 5. Article & Authoring Classes --- */
@@ -297,7 +282,7 @@
             color: var(--muted);
         }
         .footnotes ol { padding-left: 1.2rem; }
-        .footnotes li { margin-bottom: 1.5rem; line-height: 1.5; }
+        .footnotes li { margin-bottom: 1.5rem; line-height: 1.5; overflow-wrap: break-word; }
         .footnotes blockquote { 
             font-size: 0.8rem; 
             margin: 0.5rem 0; 
@@ -341,6 +326,7 @@
             height: 8px;
             background-color: currentColor;
             border-radius: 2px;
+            flex-shrink: 0;
         }
 
         blockquote {
@@ -468,6 +454,89 @@
             margin: 4rem auto;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        /* #endregion */
+
+        /* #region --- 9. Responsive Adjustments --- */
+        @media (max-width: 900px) {
+            #article-view { 
+                grid-template-columns: 1fr; 
+                padding: 0 2rem;
+                min-width: 0;
+            }
+            #article-sidebar { display: none; }
+            #article-content { min-width: 0; }
+            
+            .floating-wide {
+                position: relative;
+                left: auto;
+                right: auto;
+                margin: 1.5rem -2rem;
+                width: calc(100% + 4rem);
+                transform: none;
+                max-width: none;
+                border-radius: 0;
+                box-shadow: none;
+            }
+        }
+
+        @media (max-width: 768px) {
+            header, footer { padding: 1rem; }
+            #index-view { padding: 0 1rem; }
+            #article-view { padding: 0 1rem; }
+            
+            .post-title { font-size: 1.6rem; }
+            .post-subtitle { font-size: 1.1rem; }
+
+            /* Table adjustments */
+            .articles-table colgroup { display: none; }
+            .articles-table th:nth-child(2), .articles-table td:nth-child(2),
+            .articles-table th:nth-child(3), .articles-table td:nth-child(3) {
+                display: none;
+            }
+            .articles-table td:nth-child(4) {
+                white-space: normal;
+                overflow: visible;
+                text-overflow: clip;
+            }
+
+            .floating-wide {
+                margin: 1.5rem -1rem;
+                width: calc(100% + 2rem);
+            }
+
+            pre { font-size: 0.85rem; -webkit-overflow-scrolling: touch; }
+        }
+
+        @media (max-width: 480px) {
+            .articles-table th:nth-child(5), .articles-table td:nth-child(5) {
+                display: none;
+            }
+            .filter-controls {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 0.5rem;
+            }
+            #match-count { font-size: 0.8rem; }
+
+            pre { font-size: 0.8rem; }
+
+            /* Settings Panel Mobile */
+            #settings-panel {
+                width: 95%;
+                padding: 1rem;
+            }
+
+            /* Touch targets */
+            .footnote-ref, .footnote-backlink {
+                padding: 0.3rem 0.5rem;
+                display: inline-block;
+            }
+            
+            /* Typography wrapping */
+            .inline-string, code {
+                overflow-wrap: break-word;
+            }
+        }
         /* #endregion */
     </style>
 </head>
