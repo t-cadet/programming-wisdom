@@ -831,6 +831,7 @@
         }
 
         async function fetchAllArticles() {
+            // <!-- MANIFEST_START -->
             const manifest = [
               {
                 "slug": "2026-01-17-gathering-linux-syscall-numbers",
@@ -857,6 +858,7 @@
                 "topics": "#lore"
               },
             ];
+            // <!-- MANIFEST_END -->
 
             // 1. Immediately populate state with manifest data for a fast initial render
             state.articles = manifest.map(meta => ({
