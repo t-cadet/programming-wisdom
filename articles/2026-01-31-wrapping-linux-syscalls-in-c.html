@@ -1,0 +1,389 @@
+<article class="post">
+  <h1 class="post-title">Wrapping Linux Syscalls in C</h1>
+  <div class="post-meta"> </div>
+
+  <p>Previously: <a href="#2026-01-17-gathering-linux-syscall-numbers">⬅ Gathering Linux Syscall Numbers in a C Table</a>.</p>
+
+  <p>I've been writing a header-only C <a href="https://github.com/t-cadet/c/blob/main/linux.h">library</a> so I can issue Linux syscalls without libc on x86, ARM and RISC-V, 32-bits and 64-bits.
+  Last time I detailed the 
+  rather tedious process of gathering syscall numbers for several architectures.</p>
+
+  <p>This time I'll explain how I wrote C wrappers so I can actually use these syscalls.</p>
+
+  <hr>
+
+  <p>To issue a syscall, one has to put the syscall number in a register, place the arguments 
+  in other registers, and issue an assembly instruction. Because different CPU architectures 
+  use different registers and Instruction Set Architectures (ISA), syscall conventions are 
+  architecture-specific.</p>
+
+  <p class="figure-title">Syscall instruction & number register by CPU architecture <a href="https://man7.org/linux/man-pages/man2/syscall.2.html">(man 2 syscall)</a></p>
+<pre><code>   Architecture calling conventions
+       Every architecture has its own way of invoking and passing
+       arguments to the kernel.  The details for various architectures
+       are listed in the two tables below.
+
+       The first table lists the instruction used to transition to kernel
+       mode (which might not be the fastest or best way to transition to
+       the kernel, so you might have to refer to vdso(7)), the register
+       used to indicate the system call number, the register(s) used to
+       return the system call result, and the register used to signal an
+       error.
+       Arch/ABI    Instruction           System  Ret  Ret  Error    Notes
+                                         call #  val  val2
+       ───────────────────────────────────────────────────────────────────
+       alpha       callsys               v0      v0   a4   a3       1, 6
+       arc         trap0                 r8      r0   -    -
+       arm/OABI    swi NR                -       r0   -    -        2
+       arm/EABI    swi 0x0               r7      r0   r1   -
+       arm64       svc #0                w8      x0   x1   -
+       blackfin    excpt 0x0             P0      R0   -    -
+       i386        int $0x80             eax     eax  edx  -
+       ia64        break 0x100000        r15     r8   r9   r10      1, 6
+       loongarch   syscall 0             a7      a0   -    -
+       m68k        trap #0               d0      d0   -    -
+       microblaze  brki r14,8            r12     r3   -    -
+       mips        syscall               v0      v0   v1   a3       1, 6
+       nios2       trap                  r2      r2   -    r7
+       parisc      ble 0x100(%sr2, %r0)  r20     r28  -    -
+       powerpc     sc                    r0      r3   -    r0       1
+       powerpc64   sc                    r0      r3   -    cr0.SO   1
+       riscv       ecall                 a7      a0   a1   -
+       s390        svc 0                 r1      r2   r3   -        3
+       s390x       svc 0                 r1      r2   r3   -        3
+       superh      trapa #31             r3      r0   r1   -        4, 6
+       sparc/32    t 0x10                g1      o0   o1   psr/csr  1, 6
+       sparc/64    t 0x6d                g1      o0   o1   psr/csr  1, 6
+       tile        swint1                R10     R00  -    R01      1
+       x86-64      syscall               eax     rax  rdx  -        5
+       x32         syscall               eax     rax  rdx  -        5
+       xtensa      syscall               a2      a2   -    -
+</code></pre>
+
+  <p class="figure-title">Syscall argument registers by CPU architecture <a href="https://man7.org/linux/man-pages/man2/syscall.2.html">(man 2 syscall)</a></p>
+<pre><code>
+       The second table shows the registers used to pass the system call
+       arguments.
+       Arch/ABI      arg1  arg2  arg3  arg4  arg5  arg6  arg7  Notes
+       ──────────────────────────────────────────────────────────────
+       alpha         a0    a1    a2    a3    a4    a5    -
+       arc           r0    r1    r2    r3    r4    r5    -
+       arm/OABI      r0    r1    r2    r3    r4    r5    r6
+       arm/EABI      r0    r1    r2    r3    r4    r5    r6
+       arm64         x0    x1    x2    x3    x4    x5    -
+       blackfin      R0    R1    R2    R3    R4    R5    -
+       i386          ebx   ecx   edx   esi   edi   ebp   -
+       ia64          out0  out1  out2  out3  out4  out5  -
+       loongarch     a0    a1    a2    a3    a4    a5    a6
+       m68k          d1    d2    d3    d4    d5    a0    -
+       microblaze    r5    r6    r7    r8    r9    r10   -
+       mips/o32      a0    a1    a2    a3    -     -     -     1
+       mips/n32,64   a0    a1    a2    a3    a4    a5    -
+       nios2         r4    r5    r6    r7    r8    r9    -
+       parisc        r26   r25   r24   r23   r22   r21   -
+       powerpc       r3    r4    r5    r6    r7    r8    r9
+       powerpc64     r3    r4    r5    r6    r7    r8    -
+       riscv         a0    a1    a2    a3    a4    a5    -
+       s390          r2    r3    r4    r5    r6    r7    -
+       s390x         r2    r3    r4    r5    r6    r7    -
+       superh        r4    r5    r6    r7    r0    r1    r2
+       sparc/32      o0    o1    o2    o3    o4    o5    -
+       sparc/64      o0    o1    o2    o3    o4    o5    -
+       tile          R00   R01   R02   R03   R04   R05   -
+       x86-64        rdi   rsi   rdx   r10   r8    r9    -
+       x32           rdi   rsi   rdx   r10   r8    r9    -
+       xtensa        a6    a3    a4    a5    a8    a9    -
+</code></pre>
+
+  <p>Actually, using a syscall is not that different from calling a function: function arguments are also 
+  passed in registers, and this is architecture-specific too.</p>
+
+  <p class="figure-title">System V Application Binary Interface <a href="https://gitlab.com/x86-psABIs/x86-64-ABI">(x86-64)</a></p>
+  <blockquote cite="https://gitlab.com/x86-psABIs/x86-64-ABI">
+    <p><strong>Classification</strong> The size of each argument gets rounded up to eight bytes.<sup>14</sup> The basic types are assigned their natural classes:</p>
+    <ul>
+      <li>Arguments of types (signed and unsigned) <code>_Bool</code>, <code>char</code>, <code>short</code>, <code>int</code>, <code>long</code>, <code>long long</code>, and pointers are in the <strong>INTEGER</strong> class.</li>
+      <li>Arguments of types <code>_Float16</code>, <code>float</code>, <code>double</code>, <code>_Decimal32</code>, <code>_Decimal64</code> and <code>__m64</code> are in class <strong>SSE</strong>.</li>
+    </ul>
+    <p>...</p>
+    <p><strong>Passing</strong> Once arguments are classified, the registers get assigned (in left-to-right order) for passing as follows:</p>
+    <ol>
+      <li>If the class is <strong>MEMORY</strong>, pass the argument on the stack at an address respecting the argument's alignment (which might be more than its natural alignment).</li>
+      <li>If the class is <strong>INTEGER</strong>, the next available register of the sequence <code>%rdi</code>, <code>%rsi</code>, <code>%rdx</code>, <code>%rcx</code>, <code>%r8</code> and <code>%r9</code> is used.<sup>19</sup></li>
+      <li>If the class is <strong>SSE</strong>, the next available vector register is used, the registers are taken in the order from <code>%xmm0</code> to <code>%xmm7</code>.</li>
+      <li>If the class is <strong>SSEUP</strong>, the eightbyte is passed in the next available eightbyte chunk of the last used vector register.</li>
+      <li>If the class is <strong>X87</strong>, <strong>X87UP</strong> or <strong>COMPLEX_X87</strong>, it is passed in memory.</li>
+    </ol>
+  </blockquote>
+
+  <p class="figure-title">Procedure Call Standard for the Arm 64-bit Architecture <a href="https://github.com/ARM-software/abi-aa/blob/main/aapcs64/aapcs64.rst">(AAPCS64)</a></p>
+  <blockquote cite="https://github.com/ARM-software/abi-aa/blob/main/aapcs64/aapcs64.rst">
+    <p><strong>6.8 Parameter passing</strong></p>
+    <p>The base standard provides for passing arguments in general-purpose registers (r0-r7), SIMD/floating-point registers (v0-v7), scalable vector registers (z0-z7, overlaid on v0-v7), scalable predicate registers (p0-p3), and on the stack. For subroutines that take a small number of small parameters, only registers are used.</p>
+  </blockquote>
+
+  <p>The main difference between function calls and syscalls is the requirement for a specific assembly 
+  instruction (<code>syscall</code> on x86_64, <code>svc #0</code> on ARM, or <code>ecall</code> on RISC-V), 
+  and that is for security reasons: syscalls are a mechanism to ensure that user-space processes hand over control
+  to the kernel's trusted code before accessing resources. The hardware elevates the CPU's privilege level and transfers
+  control to the kernel, which then decides whether to grant resource access.</p>
+
+  <hr>
+
+  <p>Back to implementing syscall wrappers. One might reason:</p>
+  <ul>
+    <li>Syscalls and function calls are similar: they both pass arguments in registers.</li>
+    <li>The compiler handles the architecture-specific details of function calls.</li>
+    <li>Surely, the compiler must also provide an architecture-independent way of issuing syscalls.</li>
+  </ul>
+
+  <p>But the connoisseur might have guessed where this is going:</p>
+
+  <p style="font-weight: bold;">Wrong!</p>
+
+  <p>The compiler does not provide a way to use syscalls independent of the architecture. Granted, 
+  libc implements a <code>syscall</code> function, but that does not equal a language built-in: libc-free programs are on their own.</p>
+
+  <p>As backward as it may sound, there is no way to issue syscalls in standard ISO C. The 
+  usual way to get around this limitation is to use assembly, either in 
+  separate files linked to a C program or inline via compiler extensions.</p>
+
+  <p>Since I am writing a header-only library, separate assembly files are not an option. So inline assembly it is!</p>
+
+  <hr>
+
+  <p>While non-standard, the GNU inline assembly extension is supported 
+  by both GCC and Clang, which is fine for my use-case<sup><a href="#fn1" id="ref1" class="footnote-ref">1</a></sup>.
+  From the official docs, the syntax seems straightforward.</p>
+
+<p class="figure-title"><a href="https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html#Extended-Asm---Assembler-Instructions-with-C-Expression-Operands">6.11.2 Extended Asm</a> — Assembler Instructions with C Expression Operands</p>
+<blockquote cite="https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html#Extended-Asm---Assembler-Instructions-with-C-Expression-Operands">
+  <p>With extended asm you can read and write C variables from assembler and perform jumps from assembler code to C labels. Extended asm syntax uses colons (‘:’) to delimit the operand parameters after the assembler template:</p>
+
+  <pre><code class="lang-c">asm asm-qualifiers ( AssemblerTemplate 
+                   : OutputOperands 
+                   [ : InputOperands
+                   [ : Clobbers ] ])
+
+  asm asm-qualifiers ( AssemblerTemplate 
+                        : OutputOperands
+                        : InputOperands
+                        : Clobbers
+                        : GotoLabels)</code></pre>
+<p>where in the last form, asm-qualifiers contains goto (and in the first form, not).</p>
+<p>The asm keyword is a GNU extension. When writing code that can be compiled with -ansi and the various -std options, use <code>__asm__</code> instead of <code>asm</code>...</p>
+</blockquote>
+
+  <p>But reading further along, I was dismayed to see that there are a number of gotchas. For example:</p>
+
+<p class="figure-title">Extended Asm Documentation — <a href="https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html#Volatile-1">6.11.2.1 Volatile</a></p>
+  <blockquote cite="https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html#Volatile-1">
+    <p>GCC’s optimizers sometimes discard asm statements if they determine there is no need for the 
+    output variables. Also, the optimizers may move code out of loops if they believe that the code 
+    will always return the same result... Using the volatile qualifier disables these optimizations.
+    <code>asm</code> statements that have no output operands and <code>asm goto</code> statements, are implicitly volatile.</p>
+  </blockquote>
+
+  <p>And in case you thought using <code>volatile</code> would get you out of trouble, a second layer is laid out to catch even the most seasoned of programmers:</p>
+
+<p class="figure-title">Extended Asm Documentation — <a href="https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html#Volatile-1">6.11.2.1 Volatile</a> (Continued)</p>
+  <blockquote cite="https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html#Volatile-1">
+    <p>Note that the compiler can move even volatile asm instructions relative to other code, including across jump instructions. For example, on many targets there is a system register that controls the rounding mode of floating-point operations. Setting it with a volatile asm statement, as in the following PowerPC example, does not work reliably.</p>
+
+    <pre><code class="lang-c">asm volatile("mtfsf 255, %0" : : "f" (fpenv));
+sum = x + y;</code></pre>
+
+    <p>The compiler may move the addition back before the volatile asm statement. To make it work as expected, add an artificial dependency to the asm by referencing a variable in the subsequent code, for example:</p>
+
+    <pre><code class="lang-c">asm volatile ("mtfsf 255,%1" : "=X" (sum) : "f" (fpenv));
+sum = x + y;</code></pre>
+  </blockquote>
+
+  <p>As far as I can tell, the agreed-upon way to avoid instruction reordering is to use memory clobber in addition to volatile<sup><a href="#fn2" id="ref2" class="footnote-ref">2</a></sup>.</p>
+
+  <p class="figure-title">Extended Asm Documentation — <a href="https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html#Clobbers-and-Scratch-Registers-1">6.11.2.6 Clobbers and Scratch Registers</a></p>
+  <blockquote cite="https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html#Clobbers-and-Scratch-Registers-1">
+    <p><strong>"memory"</strong><br>
+    The "memory" clobber tells the compiler that the assembly code performs memory reads or writes to items other than those listed in the input and output operands (for example, accessing the memory pointed to by one of the input parameters). To ensure memory contains correct values, GCC may need to flush specific register values to memory before executing the asm. Further, the compiler does not assume that any values read from memory before an asm remain unchanged after that asm; it reloads them as needed. Using the "memory" clobber effectively forms a read/write memory barrier for the compiler.</p>
+    <p>Note that this clobber does not prevent the processor from doing speculative reads past the asm statement. To prevent that, you need processor-specific fence instructions.</p>
+  </blockquote>
+
+  <hr>
+  
+  <p>Let's illustrate the inline assembly syntax with a syscall wrapper.</p>
+
+  <p class="figure-title">_Syscall6_linux <a href="https://github.com/t-cadet/c/blob/a8abee977e3bf6dbe66b89569a525720fc017e2b/linux.h#L6699">implementation</a> for x86 64-bits</p>
+  <div class="floating-wide">
+<pre><code class="lang-c">long _Syscall6_linux(long number, long a, long b, long c, long d, long e, long f, long* ret2) {
+  register long rax __asm__("rax") = number;
+  register long rdi __asm__("rdi") = a;
+  register long rsi __asm__("rsi") = b;
+  register long rdx __asm__("rdx") = c;
+  register long r10 __asm__("r10") = d;
+  register long r8  __asm__("r8")  = e;
+  register long r9  __asm__("r9")  = f;
+
+  __asm__ volatile (
+    "syscall" // AssemblerTemplate 
+    : "=r" (rax), "=r" (rdx) //  OutputOperands
+    : "r" (rax), "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10), "r" (r8), "r" (r9) // InputOperands
+    : "rcx", "r11", "memory" // Clobbers
+  );
+
+  if (ret2) {
+    *ret2 = rdx;
+  }
+  return rax;
+}</code></pre>
+  </div>
+
+  <p class="figure-title">Extended Asm Documentation — <a href="https://gcc.gnu.org/onlinedocs/gcc/Local-Register-Variables.html">6.11.6.2 Local Register Variables</a></p>
+  <blockquote cite="https://gcc.gnu.org/onlinedocs/gcc/Local-Register-Variables.html">
+    <p>You can define a local register variable and associate it with a specified register like this:</p>
+    <pre><code class="lang-c">register int *foo asm ("r12");</code></pre>
+    <p>Do not use type qualifiers such as const and volatile, as the outcome may be contrary to expectations...
+    be aware that a register (for example r0) can be call-clobbered by subsequent code</p>
+  </blockquote>
+
+  <p>I use the <code>register</code> keyword to bind variables to registers.
+  While GCC allows specifying register constraints directly in the <code>asm</code> block on x86, this does not work on ARM and RISC-V where constraints are less granular.</p>
+
+  <p class="figure-title">Constraints for <code>asm</code> operands — <a href="https://gcc.gnu.org/onlinedocs/gcc/Simple-Constraints.html">6.11.3.1 Simple Constraints</a></p>
+    <blockquote cite="https://gcc.gnu.org/onlinedocs/gcc/Simple-Constraints.html">
+    <p><strong>'r'</strong><br>
+    A register operand is allowed provided that it is in a general register.</p>
+  </blockquote>
+
+  <p class="figure-title">Constraints for <code>asm</code> operands — <a href="https://gcc.gnu.org/onlinedocs/gcc/Modifiers.html">6.11.3.3 Constraint Modifier Characters</a></p>
+  <blockquote cite="https://gcc.gnu.org/onlinedocs/gcc/Modifiers.html">
+    <p><strong>'='</strong><br>
+    Means that this operand is written to by this instruction: the previous value is discarded and replaced by new data.</p>
+  </blockquote>
+
+  <p>Note that in the above syscall wrapper <code>rax</code> serves both as an 
+    input (the syscall number, with a generic <code>"r"</code> constraint)
+    and as an output (the result, with a generic <code>"=r"</code> constraint).</p>
+
+  <p>Another puzzle was identifying the clobbered registers. There are some hints in the comments of <code>entry.S</code> files in the kernel, for example this comment for x86_64.</p>
+  <p class="figure-title">Comment in linux/arch/x86_64/entry.S</p>
+  <pre><code>* 64-bit SYSCALL saves rip to rcx, clears rflags.RF, then saves rflags to r11, </code></pre>
+  <p>But cross-referencing clobbered registers with battle-tested implementations like <code>musl</code> or <code>glibc</code> is easier.</p>
+
+  <p>Some syscalls<sup><a href="#fn3" id="ref3" class="footnote-ref">3</a></sup> return two values in two registers. 
+  I chose an API that returns the second value via a pointer (<code>ret2</code>) to stay 
+  compatible across all architectures.</p>
+
+  <p>To make the API a bit easier to use, I also defined a macro that handles the casting automatically.</p>
+
+  <p class="figure-title">Syscall6_linux <a href="https://github.com/t-cadet/c/blob/a8abee977e3bf6dbe66b89569a525720fc017e2b/linux.h#L5897">macro</a></p>
+  <div class="floating-wide">
+<pre><code class="lang-c">#define Syscall6_linux(number, a, b, c, d, e, f, ret2) _Syscall6_linux(number, (long)(a), (long)(b), (long)(c), (long)(d), (long)(e), (long)(f), (long*)(ret2))</code></pre>
+  </div>
+
+  <p><code>_Syscall0_linux</code> to <code>_Syscall5_linux</code> have similar implementations, with fewer arguments. Although some syscalls on some architectures require a Syscall7, I did not need it to support all modern syscalls on x86, ARM and RISC-V in both 32-bits & 64-bits. For completeness, here are the implementations of <code>_Syscall6_linux</code> on ARM and RISC-V 64 bits, you can notice the syscall instruction, register names, and clobbered registers change.</p>
+
+  <p class="figure-title">_Syscall6_linux <a href="https://github.com/t-cadet/c/blob/a8abee977e3bf6dbe66b89569a525720fc017e2b/linux.h#L6821">implementation</a> on ARM 64-bits</p>
+  <div class="floating-wide">
+  <pre><code class="lang-c">long _Syscall6_linux(long number, long a, long b, long c, long d, long e, long f, long* ret2) {
+    register long x8 __asm__("x8") = number;
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    register long x3 __asm__("x3") = d;
+    register long x4 __asm__("x4") = e;
+    register long x5 __asm__("x5") = f;
+    __asm__ volatile (
+      "svc #0"
+      : "=r" (x0), "=r" (x1)
+      : "r" (x8), "r" (x0), "r" (x1), "r" (x2), "r" (x3), "r" (x4), "r" (x5)
+      : "memory", "cc"
+    );
+    if (ret2) {
+      *ret2 = x1;
+    }
+    return x0;
+  }</code></pre>
+  </div>
+
+  <p class="figure-title">_Syscall6_linux <a href="https://github.com/t-cadet/c/blob/a8abee977e3bf6dbe66b89569a525720fc017e2b/linux.h#L6943">implementation</a> on RISC-V</p>
+  <div class="floating-wide">
+  <pre><code class="lang-c">long _Syscall6_linux(long number, long a, long b, long c, long d, long e, long f, long* ret2) {
+    register long a7 __asm__("a7") = number;
+    register long a0 __asm__("a0") = a;
+    register long a1 __asm__("a1") = b;
+    register long a2 __asm__("a2") = c;
+    register long a3 __asm__("a3") = d;
+    register long a4 __asm__("a4") = e;
+    register long a5 __asm__("a5") = f;
+    __asm__ volatile (
+      "ecall"
+      : "=r" (a0), "=r" (a1)
+      : "r" (a7), "r" (a0), "r" (a1), "r" (a2), "r" (a3), "r" (a4), "r" (a5)
+      : "memory"
+    );
+    if (ret2) {
+      *ret2 = a1;
+    }
+    return a0;
+  }</code></pre>
+  </div>
+
+  <p>And that's it for the implementation of the untyped cross-architecture Syscall API.</p>
+
+  <hr>
+
+  <p class="figure-title">A quick usage <a href="https://github.com/t-cadet/c/blob/main/linux_demo.c">demo</a></p>
+  <div class="floating-wide">
+  <pre><code class="lang-c">#define C_LINUX_IMPLEMENTATION
+#include "linux.h"
+
+int main(void) {
+  int STDOUT = 1;
+  char* message = "Hello, libc-free world!\n";
+  int messageSize = 24;
+  long* ignoreRet2 = 0;
+  Syscall3_linux(NR_write_linux, STDOUT, message, messageSize, ignoreRet2);
+
+  int exitCode = 42;
+  Syscall1_linux(NR_exit_linux, exitCode, ignoreRet2);
+
+  return 0;
+}</code></pre></div>
+
+  <p class="figure-title">And the demo output</p>
+  <div class="floating-wide">
+  <pre><code>$ clang -O0 -nostdlib -static -fuse-ld=lld -ffreestanding -o linux_demo linux_demo.c -e main && ./linux_demo
+Hello, libc-free world!
+
+$ echo $?
+42</code></pre></div>
+
+  <p>Next time: we'll see how to make the API more user-friendly by wrapping every syscall in a dedicated C function.</p>
+
+  <section class="footnotes">
+    <h2>Footnotes</h2>
+    <ol>
+      <li id="fn1">
+        MSVC does not support GNU-style inline assembly for 64-bit architectures, but this is not a concern for a Linux syscall API.
+        <a href="#ref1" class="footnote-backlink">↩</a>
+      </li>
+      <li id="fn2">
+        I may have missed critical subtleties, checking against battle-tested implementations such as musl or glibc is much advised.
+        <a href="#ref2" class="footnote-backlink">↩</a>
+      </li>
+      <li id="fn3">
+        <blockquote cite="https://man7.org/linux/man-pages/man2/syscall.2.html">
+            Some architectures (namely, Alpha, IA-64, MIPS, SuperH,
+            sparc/32, and sparc/64) use an additional register ("Retval2"
+            in the above table) to pass back a second return value from the
+            pipe(2) system call; Alpha uses this technique in the
+            architecture-specific getxpid(2), getxuid(2), and getxgid(2)
+            system calls as well.  Other architectures do not use the
+            second return value register in the system call interface, even
+            if it is defined in the System V ABI. <a href="https://man7.org/linux/man-pages/man2/syscall.2.html">(man 2 syscall)</a>
+          </blockquote>
+        <a href="#ref3" class="footnote-backlink">↩</a>
+      </li>
+    </ol>
+  </section>
+</article>
