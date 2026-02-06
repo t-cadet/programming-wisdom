@@ -10,6 +10,9 @@
         :root {
             --scale: 1.0;
             --font-size-base: calc(18px * var(--scale));
+            --sidebar-w: 400px;
+            --sidebar-g: 2rem;
+            --main-max-w: 1600px;
 
             /* Default Theme: Warm Sand */
             --bg: #f4ead6;
@@ -834,6 +837,14 @@
             // <!-- MANIFEST_START -->
             const manifest = [
               {
+                "slug": "2026-02-06-a-turing-test-for-ai-coding",
+                "title": "A Turing Test for AI Coding",
+                "date": "2026-02-06",
+                "updated": "2026-02-06",
+                "people": "@op",
+                "topics": "#ai #c #turing-test"
+              },
+              {
                 "slug": "2026-01-31-wrapping-linux-syscalls-in-c",
                 "title": "Wrapping Linux Syscalls in C",
                 "date": "2026-01-31",
@@ -1065,7 +1076,7 @@
                 }
                 elements.articleContainer.appendChild(elementToAppend);
             } else {
-                elements.articleContainer.appendChild("Article not found");
+                elements.articleContainer.textContent = "Article not found";
             }
                 // Content was already pre-fetched
             
@@ -1096,7 +1107,7 @@
                 { type: 'comment', regex: /\/\*[\s\S]*?\*\/|\/\/.*/ },
                 { type: 'string', regex: /"(?:\\.|[^"\\])*"/ },
                 { type: 'char', regex: /'(?:\\.|[^'\\])'/ },
-                { type: 'number', regex: /\b(?:0x[0-9a-fA-F]+|0[0-7]*|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/ },
+                { type: 'number', regex: /\b0x[0-9a-fA-F]+\b|(?:\b\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?[fF]?\b/ },
                 { type: 'keyword', regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\b/ }
             ];
             
@@ -1135,6 +1146,10 @@
             }
             return result;
         }
+
+        window.highlightC = highlightC;
+
+        window.highlightC = highlightC;
 
         function highlightAllCodeBlocks() {
             $$('#article-container code.lang-c').forEach(block => {
