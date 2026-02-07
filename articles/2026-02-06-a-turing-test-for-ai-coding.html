@@ -562,6 +562,7 @@
       }
     ];
 
+    const savedScore = localStorage.getItem('turing-test-score');
     const state = {
       snippets: [],
       currentIndex: 0,
@@ -569,7 +570,7 @@
       answered: false,
       aggregateData: new Array(11).fill(0),
       isFinished: false,
-      userPastScore: localStorage.getItem('turing-test-score')
+      userPastScore: savedScore !== null ? parseInt(savedScore, 10) : null
     };
 
     // Obfuscate correctness bitmask: 1 bit per snippet (1 for human, 0 for AI)
@@ -671,6 +672,8 @@
     function finishQuiz() {
       state.isFinished = true;
       localStorage.setItem('turing-test-score', state.score);
+
+      let alreadyPlayed = state.userPastScore != null;
       state.userPastScore = state.score;
 
       document.getElementById('quiz-active').style.display = 'none';
@@ -690,7 +693,9 @@
       renderHistogram();
 
       // Submit to Google Form
-      submitScore(state.score);
+      if (!alreadyPlayed) {
+        submitScore(state.score);
+      }
       
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -781,6 +786,10 @@
       }
 
       state.aggregateData.forEach((count, i) => {
+        if (!state.isFinished && state.userPastScore === i && count === 0) {
+          count = 1;
+        }
+
         const barHeight = maxCount > 0 ? (count / maxCount) * (height - padding) : 0;
         const x = leftPadding + i * barWidth;
         const y = height - padding - barHeight;
@@ -791,7 +800,7 @@
         rect.setAttribute("width", barWidth - 10);
         rect.setAttribute("height", barHeight);
         
-        const isUserBin = (state.isFinished && state.score === i) || (!state.isFinished && state.userPastScore == i);
+        const isUserBin = (state.isFinished && state.score === i) || (!state.isFinished && state.userPastScore === i);
         rect.setAttribute("class", "histogram-bar" + (isUserBin ? " user-score" : " active"));
         
         const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
