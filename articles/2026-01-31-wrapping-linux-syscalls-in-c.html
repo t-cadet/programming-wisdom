@@ -337,7 +337,8 @@ sum = x + y;</code></pre>
   <pre><code class="lang-c">#define C_LINUX_IMPLEMENTATION
 #include "linux.h"
 
-int main(void) {
+__attribute__((force_align_arg_pointer))
+void main(void) {
   int STDOUT = 1;
   char* message = "Hello, libc-free world!\n";
   int messageSize = 24;
@@ -346,8 +347,6 @@ int main(void) {
 
   int exitCode = 42;
   Syscall1_linux(NR_exit_linux, exitCode, ignoreRet2);
-
-  return 0;
 }</code></pre></div>
 
   <p class="figure-title">And the demo output</p>
@@ -359,6 +358,16 @@ $ echo $?
 42</code></pre></div>
 
   <p>Next time: we'll see how to make the API more user-friendly by wrapping every syscall in a dedicated C function.</p>
+
+  <hr>
+
+  <p><strong>Edit:</strong> Thank you to the Redditor <a href="https://www.reddit.com/r/C_Programming/comments/1qt1ohl/comment/o2zuyx8/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button">pointing out</a> that the stack pointer must be aligned to 16 bytes, at least on x86_64. I edited the code sample to do so with <code>force_align_arg_pointer</code>, though creating an assembly entry point that calls main is the more common way to ensure proper stack pointer alignment.</p>
+
+  <p>The gist of the issue is that on x86_64 the compiler expects functions such as <code>main</code> to be <code>call</code>ed from a 16-byte aligned stack, i.e. with the stack pointer's hex address ending in 0. On x86_64 the <code>call</code> instruction then pushes an 8-byte return address on the stack, so the compiler assumes the stack address ends with 8 on function entry, and it emits an instruction to push <code>rbp</code> on the stack, which aligns the stack back to 16.</p>
+
+  <p>However Linux transfers control to the entry point without executing a <code>call</code> instruction, so there is no return address pushed on the stack and thus the stack is 16-byte aligned on entry, which breaks the compiler's assumptions if the entry point is a regular function (naked functions and assembly symbols are fine). The actual value of the stack pointer is only known at runtime, so of course the compiler has no way to know in advance that the stack will be unaligned. The compiled assembly proceeds as usual, except it runs with a 16-byte aligned stack instead of the expected 8, and so it pushes rbp on the stack, aligning the stack pointer to 8 bytes before the execution goes on in the function code proper.</p>
+
+  <p>This results in a crash on instructions that expect 16-byte aligned memory, like <code>_mm_load_si128</code> loading a (now 8-byte aligned) stack-allocated array. Note that x86_32 is also affected by this issue, with the difference that the pushed return address is 4 bytes. However ARM and RISC-V are not affected, because they use registers to store the return address, so the stack alignment doesn't change whether <code>call</code> is executed or not.</p>
 
   <section class="footnotes">
     <h2>Footnotes</h2>
