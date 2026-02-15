@@ -1,0 +1,416 @@
+<article class="post">
+  <h1 class="post-title">Providing a C Function for Every Linux Syscall</h1>
+  <div class="post-meta"> </div>
+
+  <p>Previously: <a href="#2026-01-31-wrapping-linux-syscalls-in-c">⬅ Wrapping Linux Syscalls in C</a>.</p>
+
+  <p>I've been writing a single file, header-only library for Linux's API.
+  Previously, I <a href="#2026-01-17-gathering-linux-syscall-numbers">gathered all of Linux's syscall numbers in a table</a>,
+  and <a href="#2026-01-31-wrapping-linux-syscalls-in-c">wrote generic <code>SyscallN</code> wrappers</a> to use them.</p>
+
+  <p>Still, a dedicated C function would be more convenient to use than a generic wrapper, so let's provide one for each syscall.</p>
+
+  <p>Full source <a href="https://github.com/t-cadet/c/blob/main/linux.h">here</a>.</p>
+
+  <h2><span class="roman">I</span>. Gathering syscall prototypes</h2>
+
+  <p>The first step is to retrieve all of the prototypes.</p>
+
+  <p class="figure-title">linux/Documentation/process/adding-syscalls.rst</p>
+  <pre><code>The new entry point also needs a corresponding function prototype, in
+``include/linux/syscalls.h``, marked as asmlinkage to match the way that system
+calls are invoked:
+
+    asmlinkage long sys_xyzzy(...);
+</code></pre>
+
+  <p>Let's take a look at that <code>syscalls.h</code> file.</p>
+
+  <p class="figure-title">linux/include/linux/syscalls.h</p>
+<pre><code class="lang-c">asmlinkage long sys_io_setup(unsigned nr_reqs, aio_context_t __user *ctx);
+asmlinkage long sys_io_destroy(aio_context_t ctx);
+asmlinkage long sys_io_submit(aio_context_t, long, 
+			struct iocb __user * __user *);
+asmlinkage long sys_io_cancel(aio_context_t ctx_id, struct iocb __user *iocb, 
+			      struct io_event __user *result);</code></pre>
+
+  <p>That seems promising.</p>
+
+  <p>So I went ahead and used a script to parse all of the prototypes from the <code>syscalls.h</code> file, retrieving the name of the syscalls, as well as
+  their parameters as a list of name and type pairs. However, I do not particularly recommend that approach. Using one of the more thorough third-party syscall tables,
+  like <a href="https://syscalls.mebeim.net/?table=x86/64/x64/latest">this one</a> based on kernel images built with debug info, is probably easier
+  (I only found out about it after the fact).</p>
+
+  <p>Here are some of the issues I had with <code>syscalls.h</code>:</p>
+  <ul>
+    <li>some prototypes are missing, for example <code>mmap</code></li>
+    <li>some syscalls appear multiple times with different prototypes due to <code>#ifdef</code>s, for example <code>clone</code></li>
+    <li>some parameters only have types, no name, for example <code>asmlinkage long sys_listen(int, int)</code></li>
+    <li>pointer types are often specified as <code>unsigned long</code> instead of <code>void *</code>, for example in <code>asmlinkage long sys_munmap(unsigned long addr, size_t len)</code></li>
+    <li><code>const</code> is often missing from read-only pointers, for example in <code>asmlinkage long sys_sendmsg(int fd, struct user_msghdr __user *msg, unsigned flags)</code></li>
+    <li>parameters have clearer names in the manual</li>
+  </ul>
+
+  <p>All in all, I ended up adding or overriding 197 prototypes, which is approximately 40% of the 485 syscalls listed in my syscall numbers table.
+  I then used the prototype info to generate what I call "trivial wrappers" (as opposed to wrappers that require manual override) for every syscall.</p>
+
+  <p class="figure-title">trivial wrappers for <code>read</code> and <code>write</code></p>
+<pre><code class="lang-c">// 5b. Reading and writing file data
+long read_linux(unsigned int fd, void *buf, unsigned long count) {
+  return Syscall3_linux(NR_read_linux, fd, buf, count, 0);
+}
+long write_linux(unsigned int fd, const void *buf, unsigned long count) {
+  return Syscall3_linux(NR_write_linux, fd, buf, count, 0);
+}</code></pre>
+
+  <h2><span class="roman">II</span>. Retrieving Linux headers' constants and types</h2>
+
+  <p>Most Linux syscalls cannot be used conveniently on their own; they require constants.</p>
+
+  <p class="figure-title"><code>seek</code> positions</p>
+<pre><code class="lang-c">#define SEEK_SET_linux              0
+#define SEEK_CUR_linux              1
+#define SEEK_END_linux              2</code></pre>
+
+  <p>And they require types.</p>
+
+  <p class="figure-title"><code>clone</code> arguments</p>
+<pre><code class="lang-c">typedef struct {
+  unsigned long long flags;
+  unsigned long long pidfd;
+  unsigned long long child_tid;
+  unsigned long long parent_tid;
+  unsigned long long exit_signal;
+  unsigned long long stack;
+  unsigned long long stack_size;
+  unsigned long long tls;
+  unsigned long long set_tid;
+  unsigned long long set_tid_size;
+  unsigned long long cgroup;
+} clone_args_linux;</code></pre>
+
+  <p>Extracting all of these from Linux headers manually is a lot of work.</p>
+  
+  <p>To make the process faster, I plugged <a href="https://github.com/google-gemini/gemini-cli">Gemini CLI</a> to a folder containing the Linux sources and the manual sources.
+  Then going through the subsections of my syscall numbers table one at a time, I asked the LLM to retrieve all relevant constants and types for the subsection. I then checked the results
+  trying to make sure it didn't forget or mess up anything, and moved to the next subsection.</p>
+
+  <p>It still took a very long time to go through all subsections, as you might guess when looking at the
+  thousands of lines of defines and structs in the end result. Due to the nature of the process, there may be missing symbols or other issues that will get fixed as I use the library more.</p>
+
+  <h2><span class="roman">III</span>. Syscalls that require non-trivial wrappers</h2>
+
+  <p>Some syscall wrappers do not "just work" like the ones for <code>read</code> and <code>write</code> I showed above, and require a manual implementation.
+  There can be a few reasons for that. Let's go through them:</p>
+
+  <h3>A. Superseded syscalls are not implemented on new architectures even if they are useful</h3>
+
+  <p class="figure-title">syscall numbers table section 1. Process & thread lifecycle</p>
+  <div class="floating-wide">
+<pre><code class="lang-c">/*║                                                1. PROCESS & THREAD LIFECYCLE                                                 ║*/
+/*║                              Creation, execution, termination, and reaping of processes/threads                              ║*/
+/*╠══════════════════════════════════════════════════════════════╦═════════╤═════════╤═════════╤═════════╤═════════╤═════════════╣*/
+/*║                         Syscall Name                         ║ x86_64  │  arm64  │ riscv64 │ x86_32  │  arm32  │   riscv32   ║*/
+/*╟──────────────────────────────────────────────────────────────╨─────────┴─────────┴─────────┴─────────┴─────────┴─────────────╢*/
+/*║*/ #define NR_fork_linux                         BY_ARCH_linux(       57,     void,     void,        2,        2,     void) /*║*/
+/*║*/ #define NR_vfork_linux                        BY_ARCH_linux(       58,     void,     void,      190,      190,     void) /*║*/
+/*║*/ #define NR_clone_linux                        BY_ARCH_linux(       56,      220,      220,      120,      120,      220) /*║*/
+/*║*/ #define NR_clone3_linux                       BY_ARCH_linux(      435,      435,      435,      435,      435,      435) /*║*/
+/*║*/ #define NR_execve_linux                       BY_ARCH_linux(       59,      221,      221,       11,       11,      221) /*║*/
+/*║*/ #define NR_execveat_linux                     BY_ARCH_linux(      322,      281,      281,      358,      387,      281) /*║*/
+/*║*/ #define NR_exit_linux                         BY_ARCH_linux(       60,       93,       93,        1,        1,       93) /*║*/
+/*║*/ #define NR_exit_group_linux                   BY_ARCH_linux(      231,       94,       94,      252,      248,       94) /*║*/
+/*║*/ #define NR_wait4_linux                        BY_ARCH_linux(       61,      260,      260,      114,      114,     void) /*║*/
+/*║*/ #define NR_waitid_linux                       BY_ARCH_linux(      247,       95,       95,      284,      280,       95) /*║*/
+/*║*/ #define NR_waitpid_linux                      BY_ARCH_linux(     void,     void,     void,        7,     void,     void) /*║*/</code></pre>
+  </div>
+
+  <p>In the above table, you can see that some syscalls do not have a syscall number on every architecture.</p>
+  
+  <p>For example, such a pedestrian syscall as <code>fork</code> is not implemented on arm64 nor on riscv64.
+  Linux leaves it up to user space to figure out what <code>fork</code> does and how to fill the gap in the API.
+  Thus, the man and your favorite flavor of libc are your friends for this part of the process.</p>
+
+  <p class="figure-title"><code>fork</code> wrapper</p>
+<pre><code class="lang-c">long fork_linux(void) {
+  return clone_linux(SIGCHLD_linux, 0, 0, 0, 0);
+}</code></pre>
+
+  <p>Usually the implementation is not too bad, but it can get a lot more involved.</p>
+
+  <p class="figure-title"><code>wait4</code> wrapper</p>
+  <div class="floating-wide">
+<pre><code class="lang-c">long wait4_linux(int pid, int *stat_addr, int options, rusage_linux *ru) {
+#if !(defined(__riscv) && (__riscv_xlen == 32))
+  return Syscall4_linux(NR_wait4_linux, pid, stat_addr, options, ru, 0);
+#else
+  int which = P_PID_linux;
+  if (pid < -1) {
+    which = P_PGID_linux;
+    pid = -pid;
+  } else if (pid == -1) {
+    which = P_ALL_linux;
+  } else if (pid == 0) {
+    which = P_PGID_linux;
+  }
+
+  siginfo_t_linux infop;
+  infop.si_pid_linux = 0;
+
+  long ret = Syscall5_linux(NR_waitid_linux, which, pid, &infop, options | WEXITED_linux, ru, 0);
+
+  if (ret >= 0) {
+    ret = infop.si_pid_linux;
+    if (infop.si_pid_linux && stat_addr) {
+      switch (infop.si_code) {
+        case CLD_EXITED_linux: *stat_addr = (infop.si_status_linux & 0xff) << 8; break;
+        case CLD_KILLED_linux: *stat_addr = infop.si_status_linux & 0x7f; break;
+        case CLD_DUMPED_linux: *stat_addr = (infop.si_status_linux & 0x7f) | 0x80; break;
+        case CLD_TRAPPED_linux:
+        case CLD_STOPPED_linux: *stat_addr = (infop.si_status_linux << 8) | 0x7f; break;
+        case CLD_CONTINUED_linux: *stat_addr = 0xffff; break;
+        default: *stat_addr = 0; break;
+      }
+    }
+  }
+
+  return ret;
+#endif
+}</code></pre>
+  </div>
+
+  <p>Another good one is <code>gethostname</code>. None of the architectures implement it.</p>
+
+  <p class="figure-title"><code>gethostname</code> syscall numbers</p>
+    <div class="floating-wide">
+<pre><code class="lang-c">/*║                         Syscall Name                         ║ x86_64  │  arm64  │ riscv64 │ x86_32  │  arm32  │   riscv32   ║*/
+/*╟──────────────────────────────────────────────────────────────╨─────────┴─────────┴─────────┴─────────┴─────────┴─────────────╢*/
+/*║*/ #define NR_gethostname_linux                  BY_ARCH_linux(     void,     void,     void,     void,     void,     void) /*║*/</code></pre></div>
+
+  <p class="figure-title"><code>gethostname</code> wrapper</p>
+<pre><code class="lang-c">long gethostname_linux(char *name, unsigned long len) {
+  if (name) {
+    utsname_linux uts;
+    long res = uname_linux(&uts);
+    if (res < 0) return res;
+    long i = 0;
+    while (i < len && uts.nodename[i]) {
+      name[i] = uts.nodename[i];
+      ++i;
+    }
+    if (i < len) {
+      name[i] = '\0';
+      return 0;
+    } else if (len > 0) {
+      name[len - 1] = '\0';
+    }
+  }
+  return -ENAMETOOLONG_linux;
+}</code></pre>
+
+  <h3>B. Different architectures have different prototypes for the same syscall</h3>
+
+  <p>Usually it's because passing 64-bit arguments on 32-bit architectures requires splitting the argument in <code>LO</code> and <code>HI</code> parts to make it fit into 32-bit registers,
+  sometimes with the additional requirement that the 64-bit argument must be passed starting on an even register, for example 0-1, 2-3, or 4-5,
+  but not 1-2. This can require padding.</p>
+
+  <p class="figure-title"><code>pread64</code> wrapper</p>
+  <div class="floating-wide">
+<pre><code class="lang-c">long pread64_linux(unsigned int fd, void *buf, unsigned long count, long long pos) {
+#if defined(__x86_64__) || defined(__aarch64__) || (defined(__riscv) && (__riscv_xlen == 64))
+  return Syscall4_linux(NR_pread64_linux, fd, buf, count, pos, 0);
+#elif defined(__i386__)
+  return Syscall5_linux(NR_pread64_linux, fd, buf, count, LO32_bits(pos), HI32_bits(pos), 0);
+#elif defined(__arm__) || (defined(__riscv) && (__riscv_xlen == 32))
+  return Syscall6_linux(NR_pread64_linux, fd, buf, count, 0, LO32_bits(pos), HI32_bits(pos), 0);
+#endif
+}</code></pre></div>
+
+  <p>Other times arguments are just swapped for historical reasons.</p>
+
+  <p class="figure-title"><code>clone</code> wrapper</p>
+  <div class="floating-wide">
+<pre><code class="lang-c">long clone_linux(unsigned long flags, void *stack, int *parent_tid, int *child_tid, unsigned long tls) {
+#if defined(__x86_64__)
+  return Syscall5_linux(NR_clone_linux, flags, stack,  parent_tid, child_tid, tls, 0);
+#else
+  return Syscall5_linux(NR_clone_linux, flags, stack,  parent_tid, tls, child_tid, 0);
+#endif
+}</code></pre></div>
+
+  <h3>C. 32-bit to 64-bit transition</h3>
+
+  <p>Syscalls dealing with time or file sizes had register sized arguments, which are not adequate to handle times after 2038 or files bigger
+  than 4GiB on 32-bit architectures.</p>
+
+  <p>Indeed, on Linux, time is represented as a signed 32-bit integer counting the number of seconds elapsed since the Unix epoch (00:00:00 UTC on January 1, 1970).
+  At 03:14:07 UTC on January 19, <a href="https://en.wikipedia.org/wiki/Year_2038_problem">2038</a>, that counter will reach the int's maximum value, 2147483647, and wrap around to -2147483648, which represents December 13, 1901 (yes, it was a <a href="https://en.wikipedia.org/wiki/December_1901#December_13,_1901_(Friday)">Friday</a>).</p>
+
+  <p>As for files, the exact limit is 4GiB - 1, because 0 is a valid value, or even 2GiB - 1 when a signed 32-bit integer is used to represent the size. How much of an issue is it? Well, video files and game assets can get quite big quickly: a single hour of HD video can exceed 4GiB.</p>
+
+  <p>So Linux introduced new syscalls to deal with the issue.</p>
+
+  <p class="figure-title"><code>clock_gettime</code> syscall numbers</p>
+  <div class="floating-wide">
+<pre><code class="lang-c">/*║                         Syscall Name                         ║ x86_64  │  arm64  │ riscv64 │ x86_32  │  arm32  │   riscv32   ║*/
+/*╟──────────────────────────────────────────────────────────────╨─────────┴─────────┴─────────┴─────────┴─────────┴─────────────╢*/
+/*║*/ #define NR_clock_gettime_linux                BY_ARCH_linux(      228,      113,      113,      265,      263,     void) /*║*/
+/*║*/ #define NR_clock_gettime64_linux              BY_ARCH_linux(     void,      403,     void,      403,      403,      403) /*║*/</code></pre></div>
+
+  <p>Except the new syscalls are not implemented on 64-bit architectures.
+  Why, of course! The original implementation already uses 64-bit arguments on 64-bit architectures. No need to provide a new syscall.</p>
+
+  <p>So to get a consistent API, user-space has to create a custom wrapper for all of these syscalls.</p>
+
+  <p class="figure-title"><code>clock_gettime64</code> wrapper</p>
+  <div class="floating-wide">
+<pre><code class="lang-c">// Disabled wrapper: long clock_gettime_linux(int which_clock, __kernel_old_timespec_linux *tp);
+long clock_gettime64_linux(int which_clock, __kernel_timespec_linux *tp) {
+#if defined(__x86_64__) || defined(__aarch64__) || (defined(__riscv) && (__riscv_xlen == 64))
+  return Syscall2_linux(NR_clock_gettime_linux, which_clock, tp, 0);
+#else
+  return Syscall2_linux(NR_clock_gettime64_linux, which_clock, tp, 0);
+#endif
+}</code></pre></div>
+
+  <p>Out of these my favorite has to be <code>fadvise64_64</code>. It looks like they foresaw the need for a 64-bit offset and created <code>fadvise64</code>.
+  But then they also needed a 64-bit length which resulted in <code>fadvise64_64</code>.</p>
+
+  <p class="figure-title"><code>fadvise64_64</code> wrapper</p>
+  <div class="floating-wide">
+<pre><code class="lang-c">// Disabled wrapper: long fadvise64_linux(int fd, long long offset, unsigned long len, int advice);
+long fadvise64_64_linux(int fd, long long offset, long long len, int advice) {
+#if defined(__x86_64__) || defined(__aarch64__) || (defined(__riscv) && (__riscv_xlen == 64))
+  return Syscall4_linux(NR_fadvise64_linux, fd, offset, len, advice, 0);
+#elif defined(__i386__)
+  return Syscall6_linux(NR_fadvise64_64_linux, fd, LO32_bits(offset), HI32_bits(offset), LO32_bits(len), HI32_bits(len), advice, 0);
+#elif defined(__arm__)
+  return Syscall6_linux(NR_arm_fadvise64_64_linux, fd, advice, LO32_bits(offset), HI32_bits(offset), LO32_bits(len), HI32_bits(len), 0);
+#elif defined(__riscv) && (__riscv_xlen == 32)
+   return Syscall6_linux(NR_fadvise64_64_linux, fd, advice, LO32_bits(offset), HI32_bits(offset), LO32_bits(len), HI32_bits(len), 0);
+#endif
+}</code></pre>
+  </div>
+
+  <h3>D. Obsolete syscalls</h3>
+
+  <p>Many syscalls are obsolete. I disable them.</p>
+
+  <p class="figure-title">subsection 23a. System name and domain information</p>
+  <div class="floating-wide">
+<pre><code class="lang-c">/*║                                           23a. System name and domain information                                            ║*/
+/*╟──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╢*/
+/*║*/ #define NR_uname_linux                        BY_ARCH_linux(       63,      160,      160,      122,      122,      160) /*║*/
+/*║*/ #define NR_olduname_linux                     BY_ARCH_linux(     void,     void,     void,      109,     void,     void) /*║*/
+/*║*/ #define NR_oldolduname_linux                  BY_ARCH_linux(     void,     void,     void,       59,     void,     void) /*║*/
+/*║*/ #define NR_gethostname_linux                  BY_ARCH_linux(     void,     void,     void,     void,     void,     void) /*║*/
+/*║*/ #define NR_sethostname_linux                  BY_ARCH_linux(      170,      161,      161,       74,       74,      161) /*║*/
+/*║*/ #define NR_setdomainname_linux                BY_ARCH_linux(      171,      162,      162,      121,      121,      162) /*║*/</code></pre></div>
+
+  <p class="figure-title">disabled <code>olduname</code> & co</p>
+<pre><code class="lang-c">// Disabled wrapper: long olduname_linux(old_utsname *name);
+// Disabled wrapper: long oldolduname_linux(oldold_utsname *name);</code></pre>
+
+  <h3>E. Architecture specific syscalls</h3>
+
+  <p>They need to be enabled only on specific architectures.</p>
+
+<p class="figure-title">subsection 28a. x86 architecture operations</p>
+<pre><code class="lang-c">// 28a. x86 architecture operations
+#if defined(__x86_64__) || defined(__i386__)
+long arch_prctl_linux(int option, unsigned long addr) {
+  return Syscall2_linux(NR_arch_prctl_linux, option, addr, 0);
+}
+long modify_ldt_linux(int func, void *ptr, unsigned long bytecount) {
+  return Syscall3_linux(NR_modify_ldt_linux, func, ptr, bytecount, 0);
+}
+long set_thread_area_linux(const user_desc_linux *u_info) {
+  return Syscall1_linux(NR_set_thread_area_linux, u_info, 0);
+}
+long get_thread_area_linux(user_desc_linux *u_info) {
+  return Syscall1_linux(NR_get_thread_area_linux, u_info, 0);
+}
+#endif</code></pre>
+
+  <h3>F. The case of <code>vfork</code></h3>
+
+  <p><code>vfork</code> is a <b>bold</b> system call.</p>
+
+  <p>If you let it return from a function (such as a <code>vfork</code> wrapper function), it will corrupt the stack.</p>
+
+  <p>The idea is that vforks lets you fork processes efficiently, by sharing memory between the parent and child processes,
+  including the stack. The downside of that approach is that when the child process returns from a function, it pops the
+  stack frame. So then when the parent process is unblocked, and tries to return from the same function with an already popped stack frame, bad things happen.</p>
+
+  <p>So I disabled vfork. The modern way to do efficient forks is to use <code>clone3</code> with appropriate arguments.
+  But even <code>clone3</code> does not allow you to create a function wrapper that shares the stack, unless you use assembly to handle the stack frame yourself.
+  I did not implement that since using <code>clone3</code> to share all of the memory except the stack gets you most of the benefits of vfork with none of the issues.</p>
+
+  <hr>
+
+  <p>I only gave a few examples, but I had to disable 121 wrappers, or about a quarter of the 485 total syscalls,
+  and provide non-trivial wrappers for another 117 syscalls.</p>
+
+  <p>Looking at the above wrappers makes it quite clear that there is value in having a dedicated function for each syscall.
+  Dealing with these API esoterica everywhere syscalls are used would be a mess.</p>
+
+  <h2><span class="roman">IV</span>. Design Choices</h2>
+
+  <p>I try to stick close to the Linux API, to provide access as "raw" as possible to Linux.</p>
+
+  <p>I nevertheless made a few changes:</p>
+  <ul>
+    <li>I removed trivial typedefs, so for example <code>pid_t</code> is just <code>int</code></li>
+    <li>I infer size arguments when possible, for example for signal masks</li>
+  </ul>
+<div class="floating-wide">
+<pre><code class="lang-c">long rt_sigprocmask_linux(int how, unsigned long long *set, unsigned long long *oset) {
+  return Syscall4_linux(NR_rt_sigprocmask_linux, how, set, oset, sizeof(*set), 0);
+}</code></pre></div>
+  <ul>
+    <li>I keep 64-bit variants of syscalls: <code>fcntl64_linux</code> is defined and <code>fcntl_linux</code> is disabled</li>
+  </ul>
+
+  <hr>
+ 
+  <p>Note that Linux syscalls cover most but not all of the user-space Linux API.
+  For example there is also the ELF runtime (command-line arguments, environment variables, auxiliary vector),
+  the vDSO, and special filesystems like /proc and /sys.</p>
+
+  <h2><span class="roman">V</span>. Demo</h2>
+
+  <p class="figure-title">Updated demo</p>
+<div class="floating-wide">
+<pre><code class="lang-c">#define C_LINUX_IMPLEMENTATION
+#include "linux.h"
+
+__attribute__((force_align_arg_pointer))
+void main(void) {
+  char* message = "Hello, libc-free world!\n";
+  int messageSize = 24;
+  write_linux(STDOUT_FILENO_linux, message, messageSize);
+
+  exit_linux(42);
+}</code></pre>
+</div>
+
+  <p>For more details on <code>__attribute__((force_align_arg_pointer))</code> see the edit at the end of the <a href="#2026-01-31-wrapping-linux-syscalls-in-c">previous article</a>.</p>
+
+  <p class="figure-title">The demo output</p>
+  <div class="floating-wide">
+  <pre><code>$ clang -O0 -nostdlib -static -fuse-ld=lld -ffreestanding -o linux_demo linux_demo.c -e main && ./linux_demo
+Hello, libc-free world!
+
+$ echo $?
+42</code></pre></div>
+
+  <h2><span class="roman">VI</span>. To Conclude</h2>
+
+  <p>And that's basically it for this series on Linux syscalls.</p>
+
+  <p>At 8,976 LoC, <code>linux.h</code> is now almost the size of the Linux kernel v0.01.</p>
+
+  <p>This <em>has</em> to get one thinking!</p>
+
+  <p>A wish... A way towards a simpler world...</p>
+</article>
