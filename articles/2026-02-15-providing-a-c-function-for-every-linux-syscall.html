@@ -344,7 +344,20 @@ long get_thread_area_linux(user_desc_linux *u_info) {
 
   <p>So I disabled vfork. The modern way to do efficient forks is to use <code>clone3</code> with appropriate arguments.
   But even <code>clone3</code> does not allow you to create a function wrapper that shares the stack, unless you use assembly to handle the stack frame yourself.
-  I did not implement that since using <code>clone3</code> to share all of the memory except the stack gets you most of the benefits of vfork with none of the issues.</p>
+  <span style="text-decoration-line: line-through">I did not implement that since using <code>clone3</code> to share all of the memory except the stack gets you most of the benefits of vfork with none of the issues.</span> <strong>Edit</strong>: it is not possible to share all of the memory (<code>CLONE_VM</code> flag) <strong>and</strong> get Linux to duplicate the stack (<code>cl_args.stack = NULL</code>):</p>
+  <p class="figure-title">man clone3</p>
+  <blockquote cite="https://gitlab.com/x86-psABIs/x86-64-ABI">
+     clone3() ... allows cl_args.stack to be NULL. In this case, the child uses a duplicate of the parent's stack.
+     (Copy-on-write semantics ensure that the child gets separate copies of stack pages when either process modifies the stack.)  In this case, for correct
+     operation,  the CLONE_VM option should not be specified.  (If the child shares the parent's memory because of the use of the CLONE_VM flag, then no copy-on-write duplication occurs and
+     chaos is likely to result.)
+  </blockquote>
+  <p>My current understanding is that when <code>CLONE_VM</code> is set, allocating memory for <code>cl_args.stack</code> is not enough to avoid "chaos".
+  During the <code>clone3</code> syscall the child's <code>rsp</code> is set to <code>cl_args.stack</code>, but the compiler does not know that (and we have <a href="https://gcc.gnu.org/bugzilla/show_bug.cgi?id=52813">no way to tell it</a>).
+  So the compiler just generates code assuming <code>rsp</code> did not change.</p>
+  <p>In the child process, if <code>rsp</code> is used to access variables on the parent stack, instructions will actually read garbage from the child's stack; if instead (depending on optimizations) <code>rbp</code> is used, both the child and the parent modify the same stack which definitely breaks on the return instruction.</p>
+  <p>The traditional work-around is to use assembly to test the PID returned by <code>clone3</code>, immediately call into a child entrypoint function (an additional parameter passed to the syscall wrapper), and call exit upon return from the child entrypoint. That way the child process does not run any instruction that relies on or interferes with the parent stack.</p>
+  <p>See this <a href="https://nullprogram.com/blog/2023/03/23/">article</a> or a libc for more details on implementing a wrapper.
 
   <hr>
 
