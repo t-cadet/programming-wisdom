@@ -1,0 +1,1020 @@
+<article class="post">
+  <h1 class="post-title">An X11/XCB Platform Layer for Software Rendering</h1>
+  <div class="post-meta"> </div>
+
+  <p>So you're interested in software rendering?</p>
+
+  <p style="font-style: italic">"Yeah! I wanna render every bit of the frames my app puts on-screen.
+  And I don't want any of this GPU boilerplate. Who needs drivers?
+  I hear they don't even let people talk to the ISA, sir.
+  Can you imagine?"</p>
+
+  <p>Right. Anything like that wouldn't fly in CPU-land.
+  GPUs aren't that open, though. Their heads are in the Clouds, where they like to keep things to themselves.
+  But I digress. You wanted to learn more about Linux platform layers?</p>
+
+  <p style="font-style: italic">"Yes. Linux is the best we got, sir..."</p>
+
+  <p>Right...
+  Well, today's your lucky day! I'm just about done implementing my XCB platform layer!
+  And here's how it went . . .</p>
+
+  <p>&gt; <a href="https://github.com/t-cadet/xcb-software-renderer/blob/main/main.c">Full Code</a> &lt;</p>
+
+  <h2><span class="roman">I</span>. A Short History of Graphical Platforms</h2>
+
+  <p>Long, long ago, in 1973 to be precise, was born what we now remember as the first computer to truly enable Graphical User Interfaces.</p>
+  <p>The <a href="https://en.wikipedia.org/wiki/Xerox_Alto">Xerox Alto</a>.</p>
+  <p>Named after the Xerox Palo Alto Research Center, or Xerox PARC for short, and building on concepts demonstrated by Doug Engelbart during the <a href="https://en.wikipedia.org/wiki/The_Mother_of_All_Demos">Mother of All Demos</a>,
+  it already features the core elements of what we take for granted in modern graphical systems: the 3-button mouse we know and love, the keyboard with its iconic QWERTY layout, and even windows within the SmallTalk runtime.</p>
+
+  <p>"What kind of windows?" you may ask; well, windows that overlap each other, one for each app, resizable, with menus and scrollbars. These ideas paved the way for the <a href="https://en.wikipedia.org/wiki/Desktop_metaphor">Desktop Metaphor</a>, which still rules modern consumer OSes to this day.</p>
+
+  <p class="figure-title">The Xerox Alto in Action.</p>
+  <div style="align-content: center; text-align: center">
+    <iframe width="384" height="216" src="https://www.youtube.com/embed/9H79_kKzmFs" title="Xerox Alto" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+  </div>
+
+  <p>And with the big picture laid out, let's dive deeper into the inner workings of this legendary beast.</p>
+
+  <h3>A. Inputs</h3>
+
+  <p>The mouse and keyboard send hardware interrupts. These interrupts are translated into input events, such as a mouse motion or a key press, and the events are then stored into a queue.
+  After computing which window owns which pixels - a step known as hit testing - events are dispatched to the appropriate window.</p>
+
+  <h3>B. Outputs</h3>
+
+  <p>Graphical applications write pixel values to a dedicated region of memory called the <a href="https://en.wikipedia.org/wiki/Framebuffer">frame buffer</a>.
+  The video controller then scans that frame buffer, and translates the pixel values to instructions that control an <a href="https://en.wikipedia.org/wiki/Electron_gun">electron gun</a>.
+  The gun shoots electrons at the Cathode Ray Tube (<a href="https://en.wikipedia.org/wiki/Cathode_ray_tube">CRT</a>) display, from left to right then going back left and one pixel down, in a zig-zag pattern called <a href="https://en.wikipedia.org/wiki/Raster_scan">raster</a>.
+  When the electron beam hits the screen, a black pixel appears on the monochrome display.
+  Apps that want to be free of visual artifacts must sync rendering with the electron beam's raster.</p>
+
+  <p>Note that the CPU writes to the frame buffer directly, like it does any other region of memory.</p>
+
+  <h3>C. Windows</h3>
+
+  <p>With multiple windows arises the issue of sharing a single screen, and a single frame buffer.
+  At first, windows do not overlap, but instead <a href="https://en.wikipedia.org/wiki/Tiling_window_manager">tile</a> the screen with the underlying frame buffer shared according to the tiles' boundaries.</p>
+
+  <p>The SmallTalk runtime brings support for overlapping windows, and it keeps track of which window owns which region of the screen.
+  When a window is moved, resized, or uncovered, the runtime tells that window which region of the screen needs redraw.</p>
+
+  <hr>
+
+  <p>Modern graphical systems build upon the 3 above concepts of Inputs, Outputs and Windows, improving and adapting them to suit modern hardware and taste.</p>
+
+  <p class="figure-title">Further developments that impacted the design of graphical systems.</p>
+  <div class="floating-wide" style="background: var(--bg);">
+    <table class="articles-table">
+        <colgroup>
+            <col style="width: 15%">
+            <col style="width: 85%">
+        </colgroup>
+        <thead>
+            <tr>
+                <th>Year</th>
+                <th>Development</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td>1987</td><td>IBM's <a href="https://en.wikipedia.org/wiki/Video_Graphics_Array">VGA</a> frame buffer standard is widely supported: 256KB, 640x480, 16 colors, VSYNC</td></tr>
+            <tr><td>1987+</td><td>Super VGA cards break compatibility and require custom drivers</td></tr>
+            <tr><td>1991+</td><td>2D hardware acceleration with <a href="https://en.wikipedia.org/wiki/Bit_blit">BitBLT</a> (rectangle copy & fill, line draw)</td></tr>
+            <tr><td>1992</td><td><a href="https://en.wikipedia.org/wiki/Peripheral_Component_Interconnect">PCI</a> bus improved memory bandwidth, the frame buffer is fully mapped into memory</td></tr>
+            <tr><td>1995+</td><td>GPUs become popular, dawn of 3D hardware acceleration</td></tr>
+            <tr><td>1997</td><td>GPUs can access system RAM with <a href="https://en.wikipedia.org/wiki/Accelerated_Graphics_Port">Accelerated Graphics Port</a></td></tr>
+            <tr><td>2001</td><td>True color at 1280×1024x32bpp becomes widespread. 5MB/frame creates a read-back memory bottleneck</td></tr>
+            <tr><td>2003+</td><td>LCD displays outsell CRT displays</td></tr>
+            <tr><td>2004</td><td><a href="https://en.wikipedia.org/wiki/PCI_Express">PCI express (PCIe)</a> increased memory bandwidth, solving the memory bottleneck</td></tr>
+            <tr><td>2008</td><td><a href="https://en.wikipedia.org/wiki/Mode-setting">Kernel Mode Setting (KMS)</a>: the kernel owns the display (<a href="https://www.kernel.org/doc/Documentation/fb/framebuffer.txt">fb</a>), X11 goes through <a href="https://en.wikipedia.org/wiki/Direct_Rendering_Manager">DRM</a></td></tr>
+            <tr><td>2014</td><td>Display Port <a href="https://en.wikipedia.org/wiki/Variable_refresh_rate">Adaptive Sync</a>: displays can change their refresh rate</td></tr>
+            <tr><td>2018+</td><td>Monitors have higher resolution and refresh rate: 4K, HDR, 144Hz+</td></tr>
+            <tr><td>2020+</td><td>OLED displays come to the desktop</td></tr>
+        </tbody>
+    </table>
+  </div>
+
+  <h2><span class="roman">II</span>. The X Window System</h2>
+
+  <p>Fast forward to 1984 for the first appearance of our hero. Not Big Brother nor Steve Job's Macintosh. But indeed the first incarnation of the <a href="https://en.wikipedia.org/wiki/X_Window_System">X Window System</a>.</p>
+
+  <p class="figure-title">In the words of the creator of the X Window System, Scheiffler at MIT</p>
+  <blockquote>
+    <p>I've spent the last couple weeks writing a window system for the VS100. I stole a fair amount of code from W, surrounded it with an asynchronous rather than a synchronous interface, and called it X. Overall performance appears to be about twice that of W... This is not the ultimate window system, but I believe it is a good starting point for experimentation.</p>
+  </blockquote>
+
+  <p>The main thrust of X was to provide students with a convenient way to access the university's computing resources. Core to the design was the idea of network transparency: users interact with the X server that runs on a local computer and handles all input/output. Applications, local or remote, connect to the server, receive events from it, and tell the server what to display by sending commands.</p>
+
+  <p>The X concept of a "client" and a "server" are somewhat unintuitive as illustrated by the below quote, but this is not so important for the modern consumer use-case where clients and server run on the same machine.
+
+  <p class="figure-title"><a href="https://web.mit.edu/~simsong/www/ugh.pdf">The Unix Haters Handbook</a> Chapter 7. The X-Windows Disaster</p>
+  <blockquote>
+    <p>We have tried to avoid paragraph-length footnotes in this book, but X has defeated us by switching the meaning of client and server. In all other client/server relationships, the server is the remote machine that runs the application (i.e., the server provides services, such a database service or computation service). For some perverse reason that's better left to the imagination, X insists on calling the program running on the remote machine "the client." This program displays its windows on the "window server." ... when you see "client" think "the remote machine where the application is running," and when you see "server" think "the local machine that displays output and accepts user input."</p>
+  </blockquote>
+
+  <p>Worth noting however, is that the network-first architecture of X introduces unnecessary overhead for local clients. These performance issues are mitigated by using Unix domain sockets instead of Internet sockets for commands, and using shared memory for frames. But the complexity of serializing commands and sending them over a network interface still lurks hidden in the implementation of Xlib and XCB.</p>
+
+  <hr>
+
+  <p>The X Window System is made of up to 3 parts:</p>
+
+  <ul>
+    <li>The X Display Server: this is the core piece sitting between hardware and software. It handles the 3 building blocks I explained above: inputs followed by events dispatching, screen output, and frame buffer plus screen sharing. On Linux, X11 and Wayland are the only battle-tested display server protocols.</li>
+    <li>A <a href="https://en.wikipedia.org/wiki/X_window_manager">window manager</a>: it gives windows their look through decorations, such as title bars, close buttons, and maximize buttons; and their feel through behaviors such as window placement or tiling. See for example <a href="https://en.wikipedia.org/wiki/Xfce#Xfwm">Xfwm</a> (the window manager of the Xfce desktop environment) or <a href="https://en.wikipedia.org/wiki/I3_(window_manager)">i3</a> (a tiling window manager). From the point of view of the X server, the window manager operates like a regular client application.</li>
+    <li>A <a href="https://en.wikipedia.org/wiki/Compositing_window_manager">compositor</a>: this more recent addition handles effects like transparency and shadows by compositing all windows' frames into a single frame and sending that single frame to the screen. It forces windows to render into an off-screen buffer.</li>
+  </ul>
+
+  <p>While it is possible to bypass the X Window System on modern Linux with Direct Rendering Manager (<a href="https://en.wikipedia.org/wiki/Direct_Rendering_Manager">DRM</a>), this means seizing direct control over the entire display and inputs, breaking screen sharing and other nice features provided by the window manager, like app switching with Alt-Tab, which is often not what we want.</p>
+
+  <hr>
+
+  <p>X reached version 11 in 1987, after a major redesign aiming to make the software compatible with the wild variety of platforms and hardware of the day.</p>
+  <p>Among others, that release featured an extension system, allowing X to adapt without breaking backward compatibility; and server-side state, relieving client applications
+  from the obligation of sending the whole context in every request. You will see extensions in action later, since they are basically required to write an app that meets modern standards.</p>
+
+  <hr>
+
+  <p>X is not the only window system. On Linux there is also Wayland which tries to fix some issues of X11.
+  <p>A good reason to not pick Wayland as a target even for new apps, is that many folks run X11 (about half of surveyed machines, though the data is sparse). And while X apps work under Wayland (thanks to XWayland), Wayland apps do not work under X.</p>
+
+  <p>In other words, X apps run on 100% of Linux machines, whereas Wayland apps run on only about 50% of them.</p>
+
+  <p>X has been ported to other OSes, but they usually run their own window system: the Desktop Window Manager (DWM) on Windows, the Quartz Compositor on macOS and SurfaceFlinger on Android.</p>
+
+  <h2><span class="roman">III</span>. XCB over Xlib</h2>
+
+  <p class="figure-title">This <a href="https://www.x.org/releases/X11R7.7/doc/libxcb/tutorial/index.html">XCB tutorial</a> explains why XCB is preferred over Xlib</p>
+  <blockquote>
+    <p>But what is XCB? Xlib has been the standard C binding for the X Window System protocol for many years now. It is an excellent piece of work, but there are applications for which it is not ideal, for example:</p>
+    <ul>
+      <li>Small platforms: Xlib is a large piece of code, and it's difficult to make it smaller</li>
+      <li>Latency hiding: Xlib requests requiring a reply are effectively synchronous: they block until the reply appears, whether the result is needed immediately or not.</li>
+      <li>Direct access to the protocol: Xlib does quite a bit of caching, layering, and similar optimizations. While this is normally a feature, it makes it difficult to simply emit specified X protocol requests and process specific responses.</li>
+      <li>Threaded applications: While Xlib does attempt to support multithreading, the API makes this difficult and error-prone.</li>
+      <li>New extensions: The Xlib infrastructure provides limited support for the new creation of X extension client side code.</li>
+    </ul>
+    <p>For these reasons, among others, XCB, an X C binding, has been designed to solve the above problems and thus provide a base for</p>
+    <ul>
+      <li>Toolkit implementation.</li>
+      <li>Direct protocol-level programming.</li>
+      <li>Lightweight emulation of commonly used portions of the Xlib API.</li>
+    </ul>
+  </blockquote>
+
+  <p class="figure-title">The <a href="https://en.wikipedia.org/wiki/XCB">XCB Wikipedia page</a> adds to this picture</p>
+  <blockquote>
+    <p>The main goals of XCB are to:</p>
+    <ul>
+      <li>reduce library size and complexity</li>
+      <li>provide direct access to the X11 protocol</li>
+    </ul>
+    <p>The required size reduction is achieved primarily by restricting XCB's scope to handling the X protocol and omitting Xlib functionality such as its extensive utility library, much of which saw little use by applications. This results in a factor thirty reduction of the compiled library size (as of 2004). Secondary goals include making the C interface asynchronous, facilitating better multithreading and making it easier to implement extensions (via <a href="https://gitlab.freedesktop.org/xorg/proto/xcbproto">XML protocol descriptions</a>).</p>
+    <p>The core and extension protocol descriptions are in XML, with a program written in Python creating the C bindings.</p>
+    <p>A further goal is to be able to use these protocol descriptions to create protocol documentation, more language bindings, and server-side stubs.</p>
+  </blockquote>
+
+  <p class="figure-title">This excerpt of <a href="https://www.x.org/wiki/guide/xlib-and-xcb/">another tutorial</a> illustrates the advantages of a non-blocking API</p>
+  <blockquote>
+    <p>For instance, to lookup a window property, the Xlib code is a single function call:</p>
+<pre><code class="lang-c">XGetWindowProperty(dpy, win, atom, 0, 0, False, AnyPropertyType, &type_ret, &format_ret, &num_ret, &bytes_after, &prop_ret);</code></pre>
+    <p>Xlib generates the request to the X server to retrieve the property and appends it to its buffer of requests. Since this is a request that requires a response, Xlib then flushes the buffer, sending the contents to the X server. Next, Xlib waits until the X server processes all the requests preceding the property retrieve request, and sends the property retrieve reply. Xlib then returns the reply to the client.</p>
+    <p>...</p>
+    <p>XCB on the other hand, provides functions generated directly from the protocol descriptions in an "obvious" mechanistic way. XCB functions map directly onto the protocol, with separate functions to put requests into the outgoing buffer and to read results back from the X server asynchronously later. The XCB version of the above code is:</p>
+<pre><code class="lang-c">prop_cookie = xcb_get_property (dpy, False, win, atom, XCB_GET_PROPERTY_TYPE_ANY, 0, 0);
+prop_reply = xcb_get_property_reply (dpy, prop_cookie, NULL);</code></pre>
+    <p>The power of XCB is in allowing those two steps to have as much code as you want between them. The programmer decides when to wait for data, instead of being forced to wait for the data returned by a request at the time the request is issued.</p>
+  </blockquote>
+
+  <hr>
+
+  <p>To summarize, XCB is a direct wrapper of the X protocol, it is more recent than Xlib, much smaller, and allows for more granular control.</p>
+
+  <h2><span class="roman">IV</span>. The Code</h2>
+
+  <p>&gt; <a href="https://github.com/t-cadet/xcb-software-renderer/blob/main/main.c">Full Code</a> &lt;</p>
+
+  <p>Now that we have some context, let's go through the code. There are 5 main steps:</p>
+
+  <ul>
+    <li>Creating a window</li>
+    <li>Creating frame buffers</li>
+    <li>Handling events</li>
+    <li>Rendering</li>
+    <li>Syncing with the monitor's refresh rate</li>
+  </ul>
+
+  <p>Unfortunately the code turns out to be quite long because there are lots of nitty-gritty details to get right to properly interface with the X server.</p>
+
+  <p>To keep things simple, I just go through the code top to bottom, commenting and explaining on the way.</p>
+
+  <p style="font-weight: bold;">Useful resources:</p>
+  <ul>
+    <li><a href="https://www.x.org/releases/current/doc/libxcb/tutorial/index.html">XCB tutorial</a></li>
+    <li><a href="https://xcb.freedesktop.org/manual/modules.html">XCB Doxygen doc</a></li>
+    <li><a href="https://www.x.org/releases/X11R7.7/doc/xproto/x11protocol.html">X11 protocol</a></li>
+    <li><a href="https://gitlab.com/freedesktop-sdk/mirrors/freedesktop/xorg/lib/libxcb">Xorg gitlab</a></li>
+    <li><a href="https://gitlab.freedesktop.org/xorg/proto/presentproto/-/blob/master/presentproto.txt">Present extension protocol</a></li>
+    <li><a href="https://gitlab.freedesktop.org/xorg/proto/dri3proto/-/blob/master/dri3proto.txt">DRI3 extension protocol</a></li>
+    <li><a href="https://x.org/releases/X11R7.6/doc/xorg-docs/specs/ICCCM/icccm.html">ICCCM manual</a></li>
+    <li><a href="https://specifications.freedesktop.org/wm/latest-single/">EWMH manual</a></li>
+  </ul>
+
+  <h3>A. Connecting to the X Server</h3>
+
+  <p>The first thing we need is a connection so we can send requests to the X server.</p>
+
+<pre><code class="lang-c">int main() {
+  App app = {0};
+  
+  // Connect to X11 server
+  int preferred_screen = 0;
+  xcb_connection_t *connection = xcb_connect(NULL, &preferred_screen);
+  int xcb_connect_error_code = xcb_connection_has_error(connection);
+  if (xcb_connect_error_code > 0) DIE(connection, xcb_connect_error_to_string(xcb_connect_error_code));</code></pre>
+
+  <p><code>xcb_connect</code> and <code>xcb_disconnect</code> are documented as follows:</p>
+
+<pre><code class="lang-c">/**
+ * @brief Connects to the X server.
+ * @param displayname The name of the display.
+ * @param screenp A pointer to a preferred screen number.
+ * @return A newly allocated xcb_connection_t structure.
+ *
+ * Connects to the X server specified by @p displayname. If @p
+ * displayname is @c NULL, uses the value of the DISPLAY environment
+ * variable. If a particular screen on that server is preferred, the
+ * int pointed to by @p screenp (if not @c NULL) will be set to that
+ * screen; otherwise the screen will be set to 0.
+ *
+ * Always returns a non-NULL pointer to a xcb_connection_t, even on failure.
+ * Callers need to use xcb_connection_has_error() to check for failure.
+ * When finished, use xcb_disconnect() to close the connection and free
+ * the structure.
+ */
+xcb_connection_t *xcb_connect(const char *displayname, int *screenp);
+
+/**
+ * @brief Closes the connection.
+ * @param c The connection.
+ *
+ * Closes the file descriptor and frees all memory associated with the
+ * connection @c c. If @p c is @c NULL, nothing is done.
+ */
+void xcb_disconnect(xcb_connection_t *c);</code></pre>
+
+  <p>The first argument of <code>xcb_connect</code> is <code>displayname</code>. It has this format: <code>host:display.screen</code>, for example <code>:0:1</code>.
+  The host part is used to connect to a remote host, display selects the X server instance, and screen selects the screen.
+  Unless you need to connect to a specific display, the right thing to do is to use <code>NULL</code> to get the value from the environment.</p>
+
+  <p>As for the second argument <code>screenp</code>, it returns the value of the preferred screen, which can apparently be ignored since 2001 because RandR exposes all monitors as a single screen.
+  I still use it to be compliant with the interface, in case it becomes useful in the future.</p>
+
+  <p>The XCB connection hides a queue of pending client requests and a queue of server messages/replies.
+  <code>xcb_connection_t *</code> is passed as an argument to functions that send or receive messages from the X server.</p>
+
+  <p class="figure-title"><code>xcb_connection_t</code> in <code>xcbint.h</code></p>
+<pre><code class="lang-c">struct xcb_connection_t {
+    /* This must be the first field; see _xcb_conn_ret_error(). */
+    int has_error;
+
+    /* constant data */
+    xcb_setup_t *setup;
+    int fd;
+
+    /* I/O data */
+    pthread_mutex_t iolock;
+    _xcb_in in;
+    _xcb_out out;
+
+    /* misc data */
+    _xcb_ext ext;
+    _xcb_xid xid;
+};</code></pre>
+
+  <p><code>App</code> is a struct I created to represent the state of the app, you will see more of it when I show the rendering code.</p>
+
+  <h3>B. Error handling</h3>
+
+  <p>You can see that the call to <code>xcb_connect</code> is followed by some error handling code. I highly recommend checking for errors to quickly pinpoint issues.
+  <code>xcb_connect_error_to_string</code> is not provided by the XCB library, likewise for any other to string functions. We have to provide these ourselves.
+  <code>DIE</code> is a macro that I defined to exit after printing an error message along with the line and filename at which it occured.</p>
+
+  <h3>C. Prefetching</h3>
+
+<pre><code class="lang-c">  // Prefetch extension data
+  xcb_query_extension_cookie_t query_extension_dri3_cookie = xcb_query_extension(connection, strlen(DRI3_EXTENSION_NAME), DRI3_EXTENSION_NAME);
+  xcb_query_extension_cookie_t query_extension_present_cookie = xcb_query_extension(connection, strlen(PRESENT_EXTENSION_NAME), PRESENT_EXTENSION_NAME);
+  xcb_query_extension_cookie_t query_extension_sync_cookie = xcb_query_extension(connection, strlen(SYNC_EXTENSION_NAME), SYNC_EXTENSION_NAME);
+  xcb_sync_initialize_cookie_t xcb_sync_initialize_cookie = xcb_sync_initialize(connection, SYNC_DESIRED_MAJOR_VERSION, SYNC_DESIRED_MINOR_VERSION);
+
+  // Prefetch atoms
+  bool only_if_exists = false;
+  xcb_intern_atom_cookie_t wm_protocols_cookie = xcb_intern_atom(connection, only_if_exists, strlen("WM_PROTOCOLS"), "WM_PROTOCOLS");
+  xcb_intern_atom_cookie_t wm_delete_window_cookie = xcb_intern_atom(connection, only_if_exists, strlen("WM_DELETE_WINDOW"), "WM_DELETE_WINDOW");
+  xcb_intern_atom_cookie_t wm_sync_request_cookie = xcb_intern_atom(connection, only_if_exists, strlen("_NET_WM_SYNC_REQUEST"), "_NET_WM_SYNC_REQUEST");
+  xcb_intern_atom_cookie_t wm_sync_request_counter_cookie = xcb_intern_atom(connection, only_if_exists, strlen("_NET_WM_SYNC_REQUEST_COUNTER"), "_NET_WM_SYNC_REQUEST_COUNTER");
+
+  // Prefetch keyboard mapping
+  xcb_key_symbols_t *key_symbols = xcb_key_symbols_alloc(connection);
+  if (!key_symbols) DIE(connection, "xcb_key_symbols_alloc");
+
+  xcb_flush(connection);</code></pre>
+
+  <p>XCB is asynchronous, which means we can send requests, do some work, and then only retrieve the replies.
+  This is exactly what the above snippet does for extensions, atoms, and keyboard mappings.
+  I'll go into more details about each of these at their point of use.</p>
+
+  <p>For now, notice that the extension and atoms requests return a cookie (a 32-bit integer), which we can use later to wait for the corresponding reply.
+  <code>xcb_key_symbols_alloc</code> is part of an extension that abstracts some details, and the cookie is stored in <code>xcb_key_symbols_t</code>.</p>
+
+  <p>All of these requests take the <code>connection</code> as a parameter because they send some data to the X server.
+  We need to explicitly call <code>xcb_flush</code> to actually send the requests, otherwise they just sit in the buffer.</p>
+
+  <h3>D. Finding the Preferred Screen &amp; the Visual</h3>
+
+<pre><code class="lang-c">  // Find preferred screen
+  int screen_i = 0;
+  const xcb_setup_t *setup = xcb_get_setup(connection);
+  xcb_screen_iterator_t screen_it = xcb_setup_roots_iterator(setup);
+  while (screen_it.rem && screen_i < preferred_screen) {
+    ++screen_i;
+    xcb_screen_next(&screen_it);
+  }
+  if (screen_i != preferred_screen) DIE(connection, "cannot find preferred screen");
+  xcb_screen_t *screen = screen_it.data;
+
+  // Find visual
+  xcb_visualid_t visual = 0;
+  int depth = 24;
+  int visual_class = XCB_VISUAL_CLASS_TRUE_COLOR;
+  for (xcb_depth_iterator_t depth_it = xcb_screen_allowed_depths_iterator(screen); depth_it.rem; xcb_depth_next(&depth_it)) {
+    if (depth_it.data->depth == depth) {
+      for (xcb_visualtype_iterator_t visual_it = xcb_depth_visuals_iterator(depth_it.data); visual_it.rem; xcb_visualtype_next(&visual_it)) {
+        if (visual_it.data->_class == visual_class) {
+          visual = visual_it.data->visual_id;
+          break;
+        }
+      }
+    }
+  }
+  if (!visual) DIE(connection, "cannot find required visual");</code></pre>
+
+  <p><code>xcb_visualid_t</code>, like most XCB objects, is a handle (a 32-bit integer) to some data stored in the X server.
+  The visual describes the format of pixels. Its depth is the number of bits used for color, 32-bits for transparent windows, otherwise 24.
+  Its class is always set to <code>XCB_VISUAL_CLASS_TRUE_COLOR</code> on modern displays, but historically other values like <code>XCB_VISUAL_CLASS_GRAY_SCALE</code> were used.</p>
+
+  <p>The above code retrieves the preferred <code>xcb_screen_t</code> from the metadata stored in the <code>xcb_connection_t</code>,
+  then it iterates over the depths and visuals associated with that screen to find one with depth 24 and class <code>XCB_VISUAL_CLASS_TRUE_COLOR</code>.</p>
+
+  <p>XCB iterators are consistently named, but the interface is a bit unusual.
+  Unfortunately, you cannot iterate the data directly because depths, for example, contain a variable number of
+  visuals, which means their size is not fixed so you cannot add the size to get the next depth.</p>
+
+  <p>Screens contain useful fields, like their width and height.</p>
+
+<p class="figure-title"><code>xcb_screen_t</code> in <code>xproto.h</code></p>
+<pre><code class="lang-c">typedef struct xcb_screen_t {
+    xcb_window_t   root;
+    xcb_colormap_t default_colormap;
+    uint32_t       white_pixel;
+    uint32_t       black_pixel;
+    uint32_t       current_input_masks;
+    uint16_t       width_in_pixels;
+    uint16_t       height_in_pixels;
+    uint16_t       width_in_millimeters;
+    uint16_t       height_in_millimeters;
+    uint16_t       min_installed_maps;
+    uint16_t       max_installed_maps;
+    xcb_visualid_t root_visual;
+    uint8_t        backing_stores;
+    uint8_t        save_unders;
+    uint8_t        root_depth;
+    uint8_t        allowed_depths_len;
+} xcb_screen_t;</code></pre>
+
+  <h3>E. Creating Cursors</h3>
+
+<pre><code class="lang-c">#include &lt;xcb/xcb_cursor.h&gt;</code></pre>
+
+<pre><code class="lang-c">  // Create cursors
+  xcb_cursor_t cursors[Cursor_Size] = {0};
+  xcb_cursor_context_t *cursor_context = NULL;
+  int xcb_cursor_context_new_error = xcb_cursor_context_new(connection, screen, &cursor_context);
+  if (xcb_cursor_context_new_error < 0) {
+    DIE(connection, strerror(-xcb_cursor_context_new_error));
+  }
+  for (int cursor_index = 0; cursor_index < Cursor_Size; ++cursor_index) {
+    cursors[cursor_index] = xcb_cursor_load_cursor(cursor_context, get_cursor_name(cursor_index));
+    if (!cursors[cursor_index]) DIE(connection, "xcb_cursor_load_cursor");
+  }
+  const xcb_query_extension_reply_t *query_extension_render_reply = xcb_get_extension_data(connection, &xcb_render_id);
+  if (!query_extension_render_reply) DIE(connection, "xcb_get_extension_data: render");
+  RENDER_MAJOR_OPCODE = query_extension_render_reply->major_opcode;
+  xcb_cursor_context_free(cursor_context);</code></pre>
+
+  <p>X11 windows inherit their cursor from the parent window, but they inherit only one cursor, usually the default one.
+  You can use vanilla X11 with fonts or bitmaps to get more cursors, but they support only 2 colors: 0 and 1, which means you can't get anti-aliasing.
+  Software rendering is also not an option because it bypasses the platform's cursor theme, and more importantly if the app runs slow the cursor won't move, which is really bad UX.</p>
+
+  <p>So, for a modern experience, the <code>xcb_cursor</code> extension is required. The above code creates a context to load cursors with <code>xcb_cursor_context_new</code>.
+  Then it iterates on a Cursor enum I've defined, translates the enum value to a string which it passes to <code>xcb_cursor_load_cursor</code>, and stores the returned handle in an array.
+  Finally it frees the context with <code>xcb_cursor_context_free</code> since it's not needed anymore.</p>
+
+  <p>You may also notice the <code>xcb_get_extension_data</code> call, which is used to improve error messages.
+  Under the hood, the <code>xcb_cursor</code> extension loads and sends requests to the RENDER extension.
+  If any of these RENDER requests fail, the X server sends back an error message with a major opcode to identify the extension, and a minor opcode to identify the request.
+  We can then map these codes to strings to get readable error messages.
+  The catch is that unlike major opcodes for core requests, extension major opcodes are allocated dynamically, so we need to retrieve them from the X server.
+  In this case this is accomplished with <code>xcb_get_extension_data</code>, which gets the reply from cache because the <code>xcb_cursor</code> extension already fetched the data.
+  When the reply is not in cache the <code>xcb_get_extension_data</code> sends a request to the server and blocks until it receives a reply.</p>
+
+  <h3>F. Creating a window</h3>
+
+<pre><code class="lang-c">  // Create window
+  app.width = screen->width_in_pixels/2;
+  app.height = screen->height_in_pixels/2;
+  int x = (screen->width_in_pixels - app.width)/2;
+  int y = (screen->height_in_pixels - app.height)/2;
+  int border_width = 0;
+  int class = XCB_WINDOW_CLASS_INPUT_OUTPUT;
+  uint32_t value_mask = XCB_CW_BACK_PIXMAP | XCB_CW_BIT_GRAVITY | XCB_CW_EVENT_MASK | XCB_CW_CURSOR;
+  xcb_create_window_value_list_t value_list = {0};
+  value_list.background_pixmap = XCB_BACK_PIXMAP_NONE;
+  value_list.bit_gravity = XCB_GRAVITY_STATIC;
+  value_list.event_mask = XCB_EVENT_MASK_KEY_PRESS
+                        | XCB_EVENT_MASK_KEY_RELEASE
+                        | XCB_EVENT_MASK_BUTTON_PRESS
+                        | XCB_EVENT_MASK_BUTTON_RELEASE
+                        // | XCB_EVENT_MASK_ENTER_WINDOW
+                        // | XCB_EVENT_MASK_LEAVE_WINDOW
+                        | XCB_EVENT_MASK_POINTER_MOTION
+                        // | XCB_EVENT_MASK_KEYMAP_STATE
+                        | XCB_EVENT_MASK_VISIBILITY_CHANGE
+                        | XCB_EVENT_MASK_STRUCTURE_NOTIFY
+                        // | XCB_EVENT_MASK_FOCUS_CHANGE
+                        ;
+  value_list.cursor = cursors[app.cursor];
+  if (visual != screen->root_visual) {
+    value_mask |= XCB_CW_BORDER_PIXEL | XCB_CW_COLORMAP;
+    value_list.border_pixel = screen->black_pixel;
+    value_list.colormap = xcb_generate_id(connection);
+    xcb_create_colormap(connection, XCB_COLORMAP_ALLOC_NONE, value_list.colormap, screen->root, visual);
+  }
+  xcb_window_t window = xcb_generate_id(connection);
+  xcb_create_window_aux(connection, depth, window, screen->root, x, y, app.width, app.height, border_width, class, visual, value_mask, &value_list);</code></pre>
+
+  <p><code>xcb_generate_id</code> locally generates an ID/handle for the window, and <code>xcb_create_window_aux</code> tells the server to create a window and associate it to the provided ID.
+  As usual, the <code>xcb_create_window_aux</code> request takes the connection, then the depth (set in step D), the window ID, the screen's (set in step D) root window ID, the position and dimensions of the window, the border width which is usually ignored, the class which has to be InputOutput in order to receive events and send graphic requests, the visual (retrieved in step D), and finally a value_mask and its associated value_list.</p>
+
+  <p>When creating a window, the X server uses default values for every field in the value_list, unless a mask is set in the value_mask, in which case the corresponding value of the value_list is used. For example in the above snippet, the <code>XCB_CW_BACK_PIXMAP</code> mask bit tells the X server to use the <code>XCB_BACK_PIXMAP_NONE</code> value for the window attribute <code>background_pixmap</code>.</p>
+
+  <p><code>XCB_BACK_PIXMAP_NONE</code> tells the X server to not paint areas of the window that are newly exposed, and <code>XCB_GRAVITY_STATIC</code> tells the server to not move pixels when the window is resized. I have found that setting these 2 options helps reduce flicker when resizing.</p>
+
+  <p>Next comes <code>XCB_CW_EVENT_MASK</code>, which allows you to specify which categories of events you want to receive in the <code>event_mask</code> value. I have selected all useful events for most apps: keyboard press and release, mouse button press and release, and mouse motion. Visibility change is supposed to be sent when the window is exposed or when another window covers it so that you don't render when the window is hidden, but in my tests the event is not sent when the window is covered, apparently so that window managers can show the app in the app switcher, though it's also possible I missed something. And structure notify is sent when the window is moved or resized.</p>
+
+  <p>I also commented out other event masks that may be useful, in order: <code>XCB_EVENT_MASK_ENTER_WINDOW</code> and <code>XCB_EVENT_MASK_LEAVE_WINDOW</code> for when the pointer enters or leaves the window, <code>XCB_EVENT_MASK_KEYMAP_STATE</code> to detect modifiers pressed outside the window upon window entry and <code>XCB_EVENT_MASK_FOCUS_CHANGE</code> to detect when the window gets keyboard focus.</p>
+
+  <p>Finally the last value mask (not event mask) is <code>XCB_CW_CURSOR</code> to set the window's cursor.</p>
+
+  <p>Note that when the selected visual is not the screen's root visual, a colormap must be created and additional masks must be set, as shown in the above snippet.</p>
+
+  <p>The window is created unmapped, which is to say hidden in X terminology.</p>
+
+  <h3>G. Window title, Window manager protocols, Extension major opcodes</h3>
+
+<pre><code class="lang-c">  // Set window title
+  const char* title = "XCB Software Renderer";
+  uint8_t format = 8;
+  xcb_change_property(connection, XCB_PROP_MODE_REPLACE, window, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, format, strlen(title), title);
+  xcb_change_property(connection, XCB_PROP_MODE_REPLACE, window, XCB_ATOM_WM_ICON_NAME, XCB_ATOM_STRING, format, strlen(title), title);</code></pre>
+
+  <p>The above code changes the window title by sending a request to change the <code>XCB_ATOM_WM_NAME</code> property to the string "XCB Software Renderer".
+  <code>format</code> is the size in bits of one element in <code>title</code>. In X11, atoms are 32-bit integer handles to a server-side string. The icon name is used
+  when the window is iconified.</p>
+
+<pre><code class="lang-c">  // Retrieve atoms &amp; register for window manager protocols
+  xcb_atom_t wm_protocols = XCB_INTERN_ATOM_REPLY_OR_DIE(connection, wm_protocols_cookie);
+  xcb_atom_t wm_delete_window = XCB_INTERN_ATOM_REPLY_OR_DIE(connection, wm_delete_window_cookie);
+  xcb_atom_t wm_sync_request = XCB_INTERN_ATOM_REPLY_OR_DIE(connection, wm_sync_request_cookie);
+  xcb_atom_t wm_sync_request_counter = XCB_INTERN_ATOM_REPLY_OR_DIE(connection, wm_sync_request_counter_cookie);
+
+  xcb_atom_t wm_protocol_atoms[] = { wm_delete_window, wm_sync_request };
+  xcb_change_property(connection, XCB_PROP_MODE_REPLACE, window, wm_protocols, XCB_ATOM_ATOM, sizeof(xcb_atom_t)*8, ARRAY_SIZE(wm_protocol_atoms), wm_protocol_atoms);</code></pre>
+
+  <p>Then I retrieve the replies for the atoms I prefetched in step B with the <code>XCB_INTERN_ATOM_REPLY_OR_DIE</code> I defined to handle the errors.
+  And I use <code>xcb_change_property</code> again to register for the wm_delete protocol, which tells the window manager to send me an event when the user clicks on the window's close button so that I can exit cleanly. I also register for the sync protocol, which is useful for smoother resizing, more on that later.</p>
+
+<pre><code class="lang-c">  // Retrieve extension major opcode
+  DRI3_MAJOR_OPCODE = XCB_QUERY_EXTENSION_MAJOR_OPCODE_OR_DIE(connection, query_extension_dri3_cookie);
+  PRESENT_MAJOR_OPCODE = XCB_QUERY_EXTENSION_MAJOR_OPCODE_OR_DIE(connection, query_extension_present_cookie);
+  SYNC_MAJOR_OPCODE = XCB_QUERY_EXTENSION_MAJOR_OPCODE_OR_DIE(connection, query_extension_sync_cookie);</code></pre>
+
+  <p>The above retrieves extension major opcodes to improve error messages as explained in step E, using a macro I defined to handle errors.</p>
+
+  <h3>H. Creating the frame buffers</h3>
+
+<pre><code class="lang-c">  // Create buffers
+  int stride = (screen->width_in_pixels * 4 + 63) &amp; ~63;
+  app.stride = stride / 4;
+
+  int page_size = getpagesize();
+  int size = (stride * screen->height_in_pixels + (page_size - 1)) &amp; ~(page_size - 1);
+
+  int udmabuf_device = open("/dev/udmabuf", O_RDWR);
+  if (udmabuf_device < 0) DIE(connection, strerror(errno));
+
+  uint32_t *buffers[BUFFER_COUNT] = {0};
+  int udmabufs[BUFFER_COUNT] = {0};
+  xcb_pixmap_t pixmaps[BUFFER_COUNT] = {0};
+
+  for (int i = 0; i < BUFFER_COUNT; ++i) {
+    int memfd = memfd_create("buffer", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (memfd < 0) DIE(connection, strerror(errno));
+
+    if (ftruncate(memfd, size) < 0)
+      DIE(connection, strerror(errno));
+
+    if (fcntl(memfd, F_ADD_SEALS, F_SEAL_SHRINK) == -1)
+      DIE(connection, strerror(errno));
+
+    buffers[i] = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, memfd, 0);
+    if (buffers[i] == MAP_FAILED) DIE(connection, strerror(errno));
+    memset(buffers[i], 0, size);
+
+    struct udmabuf_create create = {0};
+    create.memfd = memfd;
+    create.size = size;
+    create.flags = UDMABUF_FLAGS_CLOEXEC;
+    udmabufs[i] = ioctl(udmabuf_device, UDMABUF_CREATE, &amp;create);
+    if (udmabufs[i] == -1) DIE(connection, strerror(errno));
+
+    uint8_t bpp = 32;
+    pixmaps[i] = xcb_generate_id(connection);
+    xcb_dri3_pixmap_from_buffer(connection, pixmaps[i], window, size, screen->width_in_pixels, screen->height_in_pixels, stride, depth, bpp, udmabufs[i]);
+
+    close(memfd);
+  }
+
+  close(udmabuf_device);</code></pre>
+
+  <p>The pixels an app renders go into frame buffers. Here I create 2 frame buffers in order to avoid visual artifacts (more on that later).</p>
+
+  <p>On a 1920x1080 screen, a frame buffer is about 8MB (1920*1080*4 bytes). This is a lot of data to transfer each frame, so in order to spare memory bandwidth,
+  the MIT-SHM extension was invented as soon as 1987. SHM stands for shared memory, and is a System-V mechanism supported by Linux to share memory between 2 processes.</p>
+
+  <p>If you look around on the internet for an efficient way to transfer frame buffers to the X server, you will quickly find out about the MIT-SHM extension.
+  But this is misleading: first, the creation of shared frame buffers with the shm* syscalls was supplanted by the sharing of frame buffers using memfd along with a
+  more recent API of the MIT-SHM extension; this fixes some security holes related to shm* syscalls permission issues, and avoids having to cleanup the shared memory segments.</p>
+
+  <p>But that's not the end: according to XCB mailing list hackers, the preferred way to share frame buffers is to use the DRI3 extension, even for software rendering.
+  Using DRI3 for a software renderer is made possible by dma buffers, which are a Linux mechanism to share a memory handle everywhere: CPU, GPU and drivers.</p>
+
+  <p>I also evaluated using Direct Rendering Manager (DRM) dumb-buffers, which is more-or-less VRAM accessible from the CPU, but the memory is mapped write-combined, so while writes are fast, reads are extremely slow.</p>
+
+  <p>Thus, the above code uses the DRI3 path to share frame buffers with X11.
+  First I compute a stride by rounding up to 64 byte, to get enough padding for SIMD rendering.
+  Then I compute a frame buffer's byte size, it has to be divisible by the page size.</p>
+
+  <p>I open the udmabuf device so I can create dma buffers, create a memfd which is a file descriptor to memory, give the memfd its size with truncate, 
+  and add the required <code>F_SEAL_SHRINK</code> to prevent anyone from shrinking the memfd.</p>
+
+  <p>Then I mmap the memfd to get a pointer to the underlying memory, marking the memory shared with <code>MAP_SHARED</code>.</p>
+
+  <p>I can now use <code>ioctl</code> with <code>UDMABUF_CREATE</code> to get a dma buffer backed by the memfd's memory.</p>
+
+  <p>Finally, I call <code>xcb_generate_id</code> to generate an ID for an <code>xcb_pixmap_t</code>, which is an X11 object we can use with graphic requests.
+  And I give this pixmap to to the DRI3 extension call <code>xcb_dri3_pixmap_from_buffer</code> to create the pixmap on the server and associate it to the dma buffer.
+  <code>bpp</code> stands for bits per pixels.</p>
+
+  <p>The code goes through the loop one more time, and the 2 frame buffers are set up.</p>
+
+  <h3>I. Special event queue for Present</h3>
+
+<pre><code class="lang-c">  // Special event queue for Present events
+  xcb_present_event_t present_event = xcb_generate_id(connection);
+  xcb_present_select_input(connection, present_event, window, XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
+  xcb_special_event_t *special_event = xcb_register_for_special_xge(connection, &amp;xcb_present_id, present_event, NULL);
+  if (!special_event) DIE(connection, "xcb_register_for_special_xge");</code></pre>
+
+  <p>Present is the extension that allows us to tell the server to show our frame, synchronized with the monitor refresh rate so we can avoid visual artifacts.
+  It sends events on a different queue than regular events so we can poll these events separately, but we have to set up the queue and select the events we want to listen to, which is what the above code does.</p>
+
+<pre><code class="lang-c">  int epollfd = epoll_create1(EPOLL_CLOEXEC);
+  if (epollfd == -1) DIE(connection, strerror(errno));
+
+  struct epoll_event epoll_event = {0};
+  struct epoll_event epoll_event_out = {0};
+  epoll_event.events = EPOLLIN;
+  epoll_event.data.fd = xcb_get_file_descriptor(connection);
+
+  if (epoll_ctl(epollfd, EPOLL_CTL_ADD, epoll_event.data.fd, &amp;epoll_event) == -1)
+    DIE(connection, strerror(errno));</code></pre>
+
+  <p>The idea with Present is to block until we receive the CompleteNotify event, which means the server has presented our frame.
+  But what if there's an error and we don't get a CompleteNotify event? Well, in that case the app hangs.
+  Present doesn't offer an API to time-out on the wait, so I implement my own with the above code, by registering an epoll file descriptor on the X server connection.</p>
+
+  <h3>J. Setting up the Sync extension</h3>
+
+<pre><code class="lang-c">  // Setup Sync extension
+  xcb_generic_error_t *xcb_sync_initialize_reply_error = NULL;
+  xcb_sync_initialize_reply_t *sync_initialize_reply = xcb_sync_initialize_reply(connection, xcb_sync_initialize_cookie, &amp;xcb_sync_initialize_reply_error);
+  if (xcb_sync_initialize_reply_error) {
+    xcb_print_error(xcb_sync_initialize_reply_error);
+    free(xcb_sync_initialize_reply_error);
+    DIE(connection, "xcb_sync_initialize_reply_error");
+  }
+  if (!sync_initialize_reply) DIE(connection, "sync_initialize_reply");
+  if (sync_initialize_reply->major_version  < SYNC_DESIRED_MAJOR_VERSION ||
+     (sync_initialize_reply->major_version == SYNC_DESIRED_MAJOR_VERSION && 
+      sync_initialize_reply->minor_version  < SYNC_DESIRED_MINOR_VERSION)) {
+    DIE(connection, "sync_initialize_reply: version mismatch");
+  }
+  free(sync_initialize_reply);</code></pre>
+
+  <p>The sync extension is used to avoid flickering on resize, more on that in the event loop itself.
+  The above code makes sure we have access to the right version of the sync extension,
+  which is something you have to check with extensions unless you don't require features from a specific version.</p>
+
+<pre><code class="lang-c">  xcb_sync_counter_t sync_counter = xcb_generate_id(connection);
+  xcb_sync_int64_t zero_sync_value = {0, 0};
+  xcb_sync_create_counter(connection, sync_counter, zero_sync_value);
+  xcb_change_property(connection, XCB_PROP_MODE_REPLACE, window, wm_sync_request_counter, XCB_ATOM_CARDINAL, sizeof(sync_counter)*8, 1, &amp;sync_counter);</code></pre>
+
+  <p>The above creates and registers a counter with the window manager. We use the counter's value to notify the window manager we handled its resize request.</p>
+
+  <h3>K. Showing the window</h3>
+
+<pre><code class="lang-c">  // Show window
+  xcb_map_window(connection, window);</code></pre>
+
+  <p>As mentioned in step F. the window is created unmapped, it has to be mapped in order to be visible.
+  Congrats for making it up to here.
+  If you're lucky, you can now see a flicker when you run the program as the window opens for a moment before the process exits.</p>
+
+  <h3>L. App &amp; event loop state</h3>
+
+<pre><code class="lang-c">  // App outputs
+  Cursor cursor = app.cursor;
+
+  // Event loop state
+  bool quit = false;
+  int current_buffer = 0;
+  int frame_count = 0;
+  float processing_dt = 0.0;
+
+  xcb_sync_int64_t pending_sync_value = zero_sync_value;
+  xcb_sync_int64_t acknowledged_sync_value = zero_sync_value;</code></pre>
+
+  <p>We've set up everything, we just initialize a bit of state before jumping into the event loop.</p>
+
+  <h3>M. Handling events</h3>
+
+<pre><code class="lang-c">  while (!quit) {
+    struct timespec start_time = {0};
+    struct timespec end_time = {0};
+
+    if (clock_gettime(CLOCK_MONOTONIC, &amp;start_time) == -1)
+      DIE(connection, strerror(errno));
+
+    int xcb_connection_error_code = xcb_connection_has_error(connection);
+    if (xcb_connection_error_code > 0) DIE(connection, xcb_connect_error_to_string(xcb_connection_error_code));
+
+    // Handle events
+    Events app_events = {0};
+    xcb_generic_event_t *event = NULL;
+    while ((event = xcb_poll_for_event(connection))) {
+      if (event->response_type == 0) {
+        xcb_generic_error_t *error = (xcb_generic_error_t *)event;
+        xcb_print_error(error);
+        DIE(connection, "xcb_print_error");
+      } else {
+        xcb_print_event(event);
+        switch (event->response_type &amp; 0x7F) {
+          case XCB_CONFIGURE_NOTIFY: {
+            const xcb_configure_notify_event_t *e = (const xcb_configure_notify_event_t *)event;
+            app.width = e->width;
+            app.height = e->height;
+            if (app.width > screen->width_in_pixels) {
+              fprintf(stderr, "[WARNING] cannot resize window to be larger than screen, clamping to screen width\n");
+              app.width = screen->width_in_pixels;
+            }
+            if (app.height > screen->height_in_pixels) {
+              fprintf(stderr, "[WARNING] cannot resize window to be taller than screen, clamping to screen height\n");
+              app.height = screen->height_in_pixels;
+            }
+            acknowledged_sync_value = pending_sync_value;
+            pending_sync_value = zero_sync_value;
+          } break;
+          case XCB_CLIENT_MESSAGE: {
+            const xcb_client_message_event_t *e = (const xcb_client_message_event_t *)event;
+            if (e->type == wm_protocols) {
+              if(e->data.data32[0] == wm_delete_window) {
+                fprintf(stderr, "Received WM_DELETE_WINDOW, quitting...\n");
+                quit = true;
+              } else if (e->data.data32[0] == wm_sync_request) {
+                pending_sync_value.lo = e->data.data32[2];
+                pending_sync_value.hi = e->data.data32[3];
+              }
+            }
+          } break;
+          case XCB_MAPPING_NOTIFY: {
+            xcb_mapping_notify_event_t *e = (xcb_mapping_notify_event_t *)event;
+            xcb_refresh_keyboard_mapping(key_symbols, e);
+          } break;
+          case XCB_KEY_PRESS: {
+            xcb_key_press_event_t *e = (xcb_key_press_event_t *)event;
+            // Note: blocks if the reply from a mapping refresh has yet to arrive
+            xcb_keysym_t keysym = xcb_key_press_lookup_keysym(key_symbols, e, 0);
+            if (keysym >= ' ' &amp;&amp; keysym <= 255) {
+              app_events.key = keysym;
+            }
+          } break;
+          case XCB_BUTTON_PRESS: {
+            const xcb_button_press_event_t *e = (const xcb_button_press_event_t *)event;
+            app_events.clicked = (e->detail == 1);
+          } break;
+          case XCB_MOTION_NOTIFY: {
+            const xcb_motion_notify_event_t *e = (const xcb_motion_notify_event_t *)event;
+            app.mouse_x = e->event_x;
+            app.mouse_y = e->event_y;
+          } break;
+        }
+      }
+      free(event);
+    }</code></pre>
+
+  <p>For games and immediate-mode GUI apps, the event-loop structure is as follows:</p>
+    <ul>
+    <li>a) drain the event queue to handle all events that occured in the previous frame and store the bits necessary to render</li>
+    <li>b) render</li>
+    <li>c) present frame</li>
+    <li>d) block until VSYNC</li>
+    <li>e) swap buffers</li>
+    <li>repeat</li>
+
+  <p>The above code does step a).</p>
+
+  <p>The loop exits when we receive an <code>XCB_CLIENT_MESSAGE</code> containing the <code>wm_delete_window</code> atom we registered in step G.
+  This is a client message because the window's close button is handled by the window manager, which is itself a client of the X server.</p>
+
+  <p>First thing in the loop we measure the start time with <code>clock_gettime</code>, <code>CLOCK_MONOTONIC</code> is important to always get a positive delta.</p>
+
+  <p>We check the connection for errors, and then we start polling events with <code>xcb_poll_for_event</code>. Two cases: if the event is an error,
+  we print the error with the custom <code>xcb_print_error</code> function and <code>DIE</code>. Otherwise we handle the event, before freeing it.</p>
+
+  <p>Handling events starts with the custom <code>xcb_print_event</code>, which is very useful for developing and can also be used as a reminder to remember how to get to various fields in the event struct.</p>
+
+  <p>By default, the window flickers on resize. We registered the sync extension with the window manager above to mitigate that. The idea is that instead of brutally resizing our window,
+  the window manager politely sends us a sync counter value through an <code>XCB_CLIENT_MESSAGE</code> containing the <code>wm_sync_request</code> atom, followed by an <code>XCB_CONFIGURE_NOTIFY</code> containing the new target size. This allows us to first render at the new size, and then only notify the window manager that it can resize our window. So in theory we should get butter smooth resize, without any flickering. In practice I got less flickering, but there are still artifacts during resize. For example if you resize the top of the window back and forth, you will see a black band go up and down at the bottom of the window. The sync counter value is used to identify which resize request is being acknowledged.</p>
+
+  <p>Note that the window can theoretically be larger than the screen, though this is mostly useful on multi-monitors setup. For now, I just clamp the window to screen size.</p>
+
+  <p><code>XCB_BUTTON_PRESS</code> tells you if a mouse button was pressed, and if so which one. 1 is left click. <code>XCB_MOTION_NOTIFY</code> is for mouse motion.
+  <code>XCB_KEY_PRESS</code> contains key codes which should be mapped to keysyms before use to account for modifiers and so on.
+  Keysyms from space to 255 map to ASCII, which is convenient.</p>
+
+  <p>You should actually use the <code>xkb.h</code> extension for modern keyboard handling.
+  I don't show it here because unfortunately I implemented the <code>XCB_KEY_PRESS</code> handling based off stale info, which is something to be wary of with old, open-source projects like X11. Anyway,
+  <code>xkb.h</code> is useful for text-heavy apps, as it has better layout reloading, dead keys handling, and mode handling.</p>
+
+  <p><code>XCB_MAPPING_NOTIFY</code> is received when the keymap changes, in which case you should reload it. This event is not sent reliably by modern window managers, which is another reason going through <code>xkb.h</code> is preferred.</p>
+
+  <h3>N. Rendering</h3>
+
+<pre><code class="lang-c">    // Render
+    render(&amp;app, buffers[current_buffer], &amp;app_events, frame_count, processing_dt);</code></pre>
+
+  <p>This article is about setting up an XCB platform layer for software rendering, rather than software rendering itself.
+  The render function is mostly there for demo purposes, so I won't comment too much.</p>
+
+<pre><code class="lang-c">typedef struct App {
+  int width, height, stride;
+
+  bool paused;
+  int stripes_frame;
+
+  int mouse_x, mouse_y;
+  Cursor cursor;
+} App;
+
+typedef struct Events {
+  bool clicked;
+  char key;
+} Events;</code></pre>
+
+  <p>The basic idea is that <code>App</code> holds the app's state, this is sent to <code>render</code> along with events every frame, so that that function can decide what to draw in an immediate-mode GUI style.</p>
+
+<pre><code class="lang-c">void render(App *app, uint32_t *buf, Events* events, int frame, float processing_dt) {
+  // Clear
+  // draw_rectangle(app, buf, 0, 0, app->width, app->height, app->stride, BLACK);
+  app->cursor = Cursor_Default;
+
+  // Tear test
+  int stripes_speed = 3;
+  int stripes_width = 64;
+  for (int y = 0; y < app->height; y++) {
+    for (int x = 0; x < app->width; x++) {
+      int stripe_pos = (x + app->stripes_frame*stripes_speed) % (stripes_width*2);
+      uint32_t color = (stripe_pos < stripes_width) ? COLOR_STRIPE_A : COLOR_STRIPE_B;
+      buf[y*app->stride + x] = color;
+    }
+  }
+  int scan_line_y = (app->stripes_frame % 120)*app->height/120;
+  draw_rectangle(app, buf, 0, scan_line_y, app->width, 1, app->stride, COLOR_SCAN_LINE);
+  if (!app->paused) app->stripes_frame += 1;
+
+  // Frame dt graph
+  FRAME_DT_GRAPH[frame % FRAME_DT_GRAPH_SIZE] = processing_dt;
+
+  int frame_base_width = app->width / FRAME_DT_GRAPH_SIZE;
+  int rem_width = app->width % FRAME_DT_GRAPH_SIZE;
+
+  int FPS_AT_MAX_HEIGHT = 60;
+  int half_height = app->height / 2;
+
+  for (int y = 0; y < half_height; ++y) {
+    for (int frame_index=0, frame_start_x=0; frame_index < FRAME_DT_GRAPH_SIZE; ++frame_index) {
+
+      int frame_dt_index = (frame + 1 + frame_index) % FRAME_DT_GRAPH_SIZE;
+      int frame_height = FRAME_DT_GRAPH[frame_dt_index]*half_height*FPS_AT_MAX_HEIGHT;
+      if (frame_height > half_height) frame_height = half_height;
+
+      int frame_width_with_rem = frame_base_width + ((frame_index < rem_width) ? 1 : 0);
+
+      if (y >= (half_height - frame_height)) {
+        for (int x = frame_start_x; x < frame_start_x + frame_width_with_rem - 1; ++x) {
+          buf[y*app->stride + x] = COLOR_DT_GRAPH;
+        }
+      }
+
+      frame_start_x += frame_width_with_rem;
+    }
+  }
+
+  // Pause Button
+  int button_w = 80;
+  int button_h = 50;
+  int button_x = (app->width - button_w)/2;
+  int button_y = (app->height*3 - button_h*2)/4;
+  int button_color = COLOR_BUTTON;
+
+  if ((app->mouse_x >= button_x &amp;&amp; app->mouse_x < (button_x + button_w)) &amp;&amp;
+      (app->mouse_y >= button_y &amp;&amp; app->mouse_y < (button_y + button_h))) {
+    button_color = COLOR_BUTTON_HOVER;
+    app->cursor = Cursor_Pointer;
+    if (events->clicked) {
+      app->paused = !app->paused;
+    }
+  }
+
+  draw_rectangle(app, buf, button_x, button_y, button_w, button_h, app->stride, button_color);
+
+  // Pause Key
+  if (events->key == ' ') {
+    app->paused = !app->paused;
+  }
+}</code></pre>
+
+  <p>The render function draws moving stripes to stress-test visual artifacts, a frame time graph to get some insight into perfs, as well as a pause button with a space shortcut
+  to showcase typical GUI interactions.</p>
+
+  <img src="https://raw.githubusercontent.com/t-cadet/xcb-software-renderer/refs/heads/main/resources/demo.png" alt="demo">
+
+  <h3>O. Presenting</h3>
+
+<pre><code class="lang-c">    uint32_t serial = current_buffer;
+    xcb_xfixes_region_t valid = 0;
+    xcb_xfixes_region_t update = 0;
+    int16_t x_off = 0;
+    int16_t y_off = 0;
+    xcb_randr_crtc_t target_crtc = 0;
+    xcb_sync_fence_t wait_fence = 0;
+    xcb_sync_fence_t idle_fence = 0;
+    uint32_t options = XCB_PRESENT_OPTION_NONE;
+    uint64_t target_msc = 0;
+    uint64_t divisor = 0;
+    uint64_t remainder = 0;
+    uint32_t notifies_len = 0;
+    const xcb_present_notify_t *notifies = NULL;
+    xcb_present_pixmap(connection, window, pixmaps[current_buffer], serial,
+                      valid, update, x_off, y_off, target_crtc, wait_fence, idle_fence, options,
+                      target_msc, divisor, remainder, notifies_len, notifies);
+
+    if (cursor != app.cursor) {
+      xcb_change_window_attributes_value_list_t attributes = {.cursor = cursors[app.cursor]};
+      xcb_change_window_attributes_aux(connection, window, XCB_CW_CURSOR, &amp;attributes);
+      cursor = app.cursor;
+      fprintf(stderr, "Changed cursor.\n");
+    }
+
+    xcb_flush(connection);
+
+    if (clock_gettime(CLOCK_MONOTONIC, &amp;end_time) == -1)
+      DIE(connection, strerror(errno));
+    processing_dt = (end_time.tv_sec - start_time.tv_sec) + (end_time.tv_nsec - start_time.tv_nsec)*1e-9;</code></pre>
+
+  <p><code>xcb_present_pixmap</code> has lots of arguments, which are mostly set to 0. These tell X to present the frame at the next VSYNC.
+  We use <code>current_buffer</code> to index into the <code>pixmaps</code> array. The X server might still use the buffer even after we received the CompleteNotify event,
+  so to avoid visual artifacts, we use a second buffer we render into while the first one might still be busy.</p>
+
+  <p>In addition to double-buffering, we can listen
+  to another Present event that tells us the buffer is now available, but I decided against implementing this because this is only useful when the X server is still
+  using the first buffer after a full frame passed, which basically never happens, and in the rare cases it does happen, we have two choices: wait for the buffer to be available, which means we'll miss the VSYNC and the user will see stutter, or render into the busy buffer anyway which means the user may see tearing. I don't have much of a preference, so I chose the simpler path which is to not listen for this event.</p>
+
+  <p>After presenting we update the cursor if required, and call <code>xcb_flush</code>, which is a nice reminder that XCB is asynchronous and nothing happens unless we explicitly flush or wait on a reply.</p>
+
+  <p>Then we get the end time which is used for drawing the frame graph.</p>
+
+  <h3>P. VSYNC &amp; Buffer Swapping</h3>
+
+<pre><code class="lang-c">    // V-Sync
+    for (;;) {
+      int ready_fds_count = epoll_wait(epollfd, &amp;epoll_event_out, 1, PRESENT_COMPLETE_NOTIFY_TIMEOUT);
+      if (ready_fds_count > 0) {
+        xcb_generic_event_t *extension_event = NULL;
+        while ((extension_event = xcb_poll_for_special_event(connection, special_event))) {
+          if ((extension_event->response_type &amp; ~0x80) == XCB_GE_GENERIC) {
+            // xcb_print_event(extension_event);
+            xcb_ge_generic_event_t *ge = (xcb_ge_generic_event_t *)extension_event;
+            if (ge->event_type == XCB_PRESENT_COMPLETE_NOTIFY) {
+              free(ge);
+              goto sync_end;
+            }
+          } else if (extension_event->response_type == 0) {
+            xcb_generic_error_t *error = (xcb_generic_error_t *)extension_event;
+            xcb_print_error(error);
+            DIE(connection, "xcb_print_error");
+          }
+          free(extension_event);
+        }
+      } else if (ready_fds_count == 0) {
+        // Reached timeout. Errors are handled
+        // at the beginning of the next event loop.
+        break;
+      } else {
+        if (errno == EINTR) continue;
+        DIE(connection, strerror(errno));
+      }
+    }
+  sync_end:
+
+    if (acknowledged_sync_value.lo != 0 || acknowledged_sync_value.hi != 0) {
+      xcb_sync_set_counter(connection, sync_counter, acknowledged_sync_value);
+      acknowledged_sync_value = zero_sync_value;
+    }
+
+  #if 0
+    struct timespec sync_end_time = {0};
+    if (clock_gettime(CLOCK_MONOTONIC, &amp;sync_end_time) == -1)
+      DIE(connection, strerror(errno));
+    float sync_dt = (sync_end_time.tv_sec - start_time.tv_sec) + (sync_end_time.tv_nsec - start_time.tv_nsec)*1e-9;
+    fprintf(stderr, "--- FRAME %d DONE: %0.2f ms, sync: %0.2f ms ---\n", frame_count, processing_dt*1e3, sync_dt*1e3);
+  #endif
+
+    ++frame_count;
+    current_buffer = (current_buffer + 1) % BUFFER_COUNT;
+  }</code></pre>
+
+  <p>After presenting the pixmap, we wait for VSYNC so that our app stays in sync with the refresh rate of the monitor.
+  This is done by polling the special event queue (step I) until we get the <code>XCB_PRESENT_COMPLETE_NOTIFY</code> event, but with a twist:
+  we poll the connection ourselves with <code>epoll_wait</code> so that we can time-out after 50ms instead of getting stuck forever when there is an error.</p>
+
+  <p>After syncing, we also notify the window manager that we've resized if needed.</p>
+
+  <p>Then follows some logging that can be enabled for convenience.</p>
+
+  <p>And finally the buffer swap before starting the next frame.</p>
+
+  <h2><span class="roman">V</span>. XCB First Impressions</h2>
+
+  <p>I found it hard to create a platform layer with XCB. The documentation is incomplete (it contains TODOs) and out-of-date.
+  I didn't find any production-ready examples either.</p>
+
+  <p>You'll need to use extensions to get things done, and you won't know it in advance.
+  I implemented the memory buffer sharing code 3 times, discovering a more modern way each time.</p>
+
+  <p>It feels like everything has to be explicitly set up to get the minimum we expect from a modern app.
+  Having modern defaults might be a better trade-off there. IIRC Win32 has something like that to get default behavior when handling events.</p>
+
+  <p>On the plus side, I like the consistent nature of the naming scheme and API, as well as the direct mapping to the X11 protocol.</p>
+
+  <h2><span class="roman">VI</span>. And that's a wrap...</h2>
+
+  <p>Finally, we are done setting up XCB. Or are we?</p>
+
+  <p>I noted a few things that I could still improve:</p>
+  <ul>
+    <li>use the XKB extension for keyboard handling</li>
+    <li>optimize away rendering when the window is hidden</li>
+    <li>implement adaptive frame-pacing to sync every N frames if we can't render fast enough</li>
+    <li>handle multiple monitors and windows larger than the screen</li>
+    <li>handle inter-client protocols better, which as far as I know is useful for things like drag &amp; drop, copy-paste, or sending selections across apps</li>
+    <li>more thorough evaluation of visual artifacts and frame-pacing</li>
+    <li>and anything I may have gotten wrong</li>
+  </ul>
+
+  But I also want to write apps, so I'll leave it at that for now.
+
+</article>
